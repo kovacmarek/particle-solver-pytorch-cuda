@@ -10,9 +10,9 @@ import time
 import matplotlib.pyplot as plt
 
 torch.manual_seed(0)
-
 simFrame = int(hou.frame()) - 1000
 
+# Load to RAM at the begining 
 staticPtnums = None
 if simFrame == 1:
     hou.session.staticSimulation = None
@@ -21,16 +21,6 @@ if simFrame == 1:
     hou.session.staticPtnums = staticPtnums
 else:
     staticPtnums = hou.session.staticPtnums
-
-# pos = torch.zeros(staticPtnums,3, device='cuda')
-# vel = torch.rand(staticPtnums,3, device='cuda')
-# mass = torch.ones(staticPtnums,1, device='cuda')
-
-# total = torch.zeros(staticPtnums,7)
-# total[:,0:3] = pos[:,:]
-# total[:,3:6] = vel[:,:]
-# total[:,-1] = mass[0,:]
-# print(total)
 
 # Globals
 negative_vector = torch.tensor([-1.0, -1.0, -1.0], device='cuda')
@@ -61,9 +51,6 @@ class Ground:
         self.Total = total
         self.Loss = torch.ones(1,staticPtnums, device='cuda')
         self.Loss = loss
-
-        # print("loss: ")
-        # print(self.Loss)
         
     def Apply( self ):              
         # Create Boolean collision mask
@@ -81,7 +68,6 @@ class Ground:
 
 class Simulation:
     def __init__(self) -> None:
-        # self.Total = torch.zeros(staticPtnums,7, device='cuda')
         self.Forces = []
         self.Constraints = []
         pass
@@ -91,7 +77,7 @@ class Simulation:
 
         # Accumulate Forces
         for force in self.Forces:
-            a = force.Apply() # staticPtnums x 3
+            a = force.Apply()
             sumForce += torch.add(sumForce, a)
         
         # Symplectic Euler Integration
@@ -100,9 +86,10 @@ class Simulation:
         acc = torch.transpose(torch.mul(torch.transpose(sumForce, dim0=0, dim1=1), normalized_mass), dim0=0, dim1=1)
         self.Total[:,3:6] += acc * TIME 
         self.Total[:,0:3] += self.Total[:,3:6] * TIME 
-
-        for constraint in self.Constraints: # Apply constraints
-            Total = constraint.Apply()
+        
+        # Apply constraints
+        for constraint in self.Constraints:
+            constraint.Apply()
         
         return self.Total # RETURN RESULT
 
@@ -112,8 +99,6 @@ class Simulation:
         pos = t_init_tensor.reshape(staticPtnums,3)
         
         pos[:,1] = 150
-        #pos[:,0] = 0
-        #pos[:,2] = 10
         vel = torch.rand(staticPtnums,3, device='cuda')
         mass = torch.ones(staticPtnums,1, device='cuda')
         mass[:,0] = 10
@@ -130,8 +115,6 @@ class Simulation:
         self.Constraints.append(Ground(total))
 
 staticSimulation = hou.session.staticSimulation
-print(staticSimulation)
-print(simFrame)
 
 if simFrame == 1:
     print("new sim")
@@ -139,16 +122,9 @@ if simFrame == 1:
     hou.session.staticSimulation = staticSimulation
     staticSimulation.BouncingParticles()
 else:
-    final = staticSimulation.update().cpu()
-    final_array = torch.flatten(final[:,0:3]).tolist()
-    geo.setPointFloatAttribValues("P", final_array)
+    final = staticSimulation.update()
+    final_array = torch.flatten(final[:,0:3]).cpu().numpy()
+    geo.setPointFloatAttribValuesFromString("P", final_array)
 end_time = time.time()    
-#iter = 0
-
-#while iter < simFrame:
-#    iter += 1
-    # print("---------------------------ITERATION " + str(iter) + " ---------------------------")
-
 
 print("Compute time for " + str(staticPtnums) + " particles: " + str(end_time - start_time))
-# print(staticSimulation.total)
