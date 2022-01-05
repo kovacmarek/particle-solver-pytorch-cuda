@@ -1,9 +1,10 @@
 import torch
 import numpy as np
 import time
+import matplotlib.pyplot as plt
 
 torch.manual_seed(0)
-ptnums = 10
+ptnums = 10000000
 
 # pos = torch.zeros(ptnums,3, device='cuda')
 # vel = torch.rand(ptnums,3, device='cuda')
@@ -17,13 +18,15 @@ ptnums = 10
 
 # Globals
 negative_vector = torch.tensor([-1.0, -1.0, -1.0], device='cuda')
-TIME  = 1
+TIME  = 0.2
 
 class Gravity:
     def __init__(self, total) -> None:
         self.Total = total
         self.Acc = torch.zeros(ptnums,3, device='cuda')
-        self.Acc[:,:] = -9.8 
+        self.Acc[:,1] = -9.8 
+        self.Acc[:,0] = torch.add(self.Acc[:,0], torch.randn(ptnums, device='cuda'))
+        self.Acc[:,2] = torch.add(self.Acc[:,0], torch.randn(ptnums, device='cuda'))
 
     def Apply(self):
         mass = self.Total[:,-1]
@@ -31,25 +34,34 @@ class Gravity:
         return torch.transpose(mass * acc, dim0=0,dim1=1) # ptnums x 3
 
 class Damping:
-    def __init__( self, total, scaling = -0.25 ):
+    def __init__( self, total, scaling = -1.0 ):
         self.Total = total
         self.Scaling = torch.tensor([scaling, scaling, scaling], device='cuda')
     def Apply( self ):
         return torch.mul(self.Total[:,3:6], self.Scaling )
 
 class Ground:
-    def __init__( self, total, loss = 1.0 ):
+    def __init__( self, total, loss = 0.9 ):
         self.Total = total
-        self.Loss = torch.tensor([loss, loss, loss], device='cuda')
+        self.Loss = torch.ones(1,ptnums, device='cuda')
+        self.Loss = loss
+
+        # print("loss: ")
+        # print(self.Loss)
         
     def Apply( self ):              
         # Create Boolean collision mask
         collision_mask = torch.where(self.Total.double()[:,1] <= 0.0, True, False) * -1
-        collision_mask = torch.where(collision_mask == 0, 1, collision_mask)
+        collision_mask = collision_mask.double()
+        collision_mask = torch.where(collision_mask == 0.0, 1.0, collision_mask * self.Loss)
 
-        # Apply Pos & Vel reverse
-        self.Total[:,0:6] = torch.transpose(torch.mul(torch.transpose(self.Total[:,0:6], dim0=0,dim1=1), collision_mask),dim0=0,dim1=1)
-        return self.Total   
+        # Apply Pos
+        self.Total[:,1] = torch.t(self.Total[:,1]) * collision_mask
+
+        # Apply Vel
+        self.Total[:,4] = torch.t(self.Total[:,4]) * collision_mask
+
+ 
 
 class Simulation:
     def __init__(self) -> None:
@@ -88,13 +100,17 @@ class Simulation:
         for constraint in self.Constraints: # Apply constraints
             Total = constraint.Apply()
         
-        print("after constraint: ")
-        print(self.Total[5:6,1])
-        print("\n")
+        # print("after constraint: ")
+        # print(self.Total[5:6,0:3])
+        # print("\n")
+
+        return self.Total # RETURN RESULT
 
     def BouncingParticles(self):
         pos = torch.zeros(ptnums,3, device='cuda')
-        pos[:,:] = 150
+        pos[:,1] = 150
+        pos[:,0] = 0
+        pos[:,2] = 10
         vel = torch.rand(ptnums,3, device='cuda')
         mass = torch.ones(ptnums,1, device='cuda')
         mass[:,0] = 2
@@ -110,12 +126,29 @@ class Simulation:
         self.Forces.append(Damping(total))
 
         self.Constraints.append(Ground(total))
+
 someSim = Simulation()
 someSim.BouncingParticles()
 
 iter = 0
-while iter < 10:
+final_pos_x = []
+final_pos_y = []
+
+start_time = time.time()
+while iter < 150:
     iter += 1
-    print("---------------------------ITERATION " + str(iter) + " ---------------------------")
-    someSim.update()
+    # print("---------------------------ITERATION " + str(iter) + " ---------------------------")
+    final = someSim.update()
+    
+    
+    # final_pos_x.append(torch.flatten(final[1,0]).numpy())
+    # final_pos_y.append(torch.flatten(final[1,1]).numpy())
+
+end_time = time.time()
+
+print("Compute time for " + str(ptnums) + " particles: " + str(end_time - start_time))
+plt.plot(final_pos_x, final_pos_y)
+plt.axis([-50,50,-100,150,])
+plt.ylabel('some numbers')
+# plt.show()
 # print(someSim.total)
