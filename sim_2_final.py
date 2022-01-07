@@ -26,13 +26,27 @@ else:
 negative_vector = torch.tensor([-1.0, -1.0, -1.0], device='cuda')
 TIME  = 0.2
 start_time = time.time()
+
 class Gravity:
     def __init__(self, total) -> None:
         self.Total = total
         self.Acc = torch.zeros(staticPtnums,3, device='cuda')
-        self.Acc[:,1] = -9.8 
-        self.Acc[:,0] = torch.add(self.Acc[:,0], torch.randn(staticPtnums, device='cuda'))
-        self.Acc[:,2] = torch.add(self.Acc[:,0], torch.randn(staticPtnums, device='cuda'))
+        self.Acc[:,1] = -9.8 # Y-axis
+        # self.Acc[:,0] = torch.add(self.Acc[:,0], torch.randn(staticPtnums, device='cuda'))
+        # self.Acc[:,2] = torch.add(self.Acc[:,0], torch.randn(staticPtnums, device='cuda'))
+
+    def Apply(self):
+        mass = self.Total[:,-1]
+        acc = torch.transpose(self.Acc, 0, 1)
+        return torch.transpose(mass * acc, dim0=0,dim1=1) # staticPtnums x 3
+
+class Noise:
+    def __init__(self, total) -> None:
+        self.Total = total
+        self.Acc = torch.zeros(staticPtnums,3, device='cuda')
+        self.Acc[:,0] = torch.add(self.Acc[:,0], torch.randn(staticPtnums, device='cuda')) # X
+        self.Acc[:,1] = torch.add(self.Acc[:,0], torch.randn(staticPtnums, device='cuda')) # Y
+        self.Acc[:,2] = torch.add(self.Acc[:,0], torch.randn(staticPtnums, device='cuda')) # Z
 
     def Apply(self):
         mass = self.Total[:,-1]
@@ -93,7 +107,7 @@ class Simulation:
         
         return self.Total # RETURN RESULT
 
-    def BouncingParticles(self):
+    def InitiatialState(self):
         init_tensor = geo.pointFloatAttribValues("P")
         t_init_tensor = torch.tensor(init_tensor, device='cuda')
         pos = t_init_tensor.reshape(staticPtnums,3)
@@ -109,8 +123,9 @@ class Simulation:
         total[:,-1] = mass[0,:]
         self.Total = total
 
-        self.Forces.append(Gravity(total))
+        # self.Forces.append(Gravity(total))
         self.Forces.append(Damping(total))
+        self.Forces.append(Noise(total))
 
         self.Constraints.append(Ground(total))
 
@@ -120,7 +135,7 @@ if simFrame == 1:
     print("new sim")
     staticSimulation = Simulation()
     hou.session.staticSimulation = staticSimulation
-    staticSimulation.BouncingParticles()
+    staticSimulation.InitiatialState()
 else:
     final = staticSimulation.update()
     final_array = torch.flatten(final[:,0:3]).cpu().numpy()
