@@ -78,6 +78,25 @@ class Ground:
         # Apply Vel
         self.Total[:,4] = torch.t(self.Total[:,4]) * collision_mask
 
+class Collision:
+    def __init__( self, total, loss = 0.9 ):
+        self.Total = total
+        self.Loss = torch.ones(1,staticPtnums, device='cuda')
+        self.Loss = loss
+        
+    def Apply( self ):              
+
+        
+        planeNormal = torch.tensor([0.0, 1.0, 0.0], device='cuda')
+        planeOrigin = torch.tensor([40.0, 40.0, 0.0], device='cuda')
+
+        first = torch.dot(planeNormal, self.Total[0,0:3] - planeOrigin)
+        second = torch.dot(planeNormal, -self.Total[0,3:6])
+        third = first/second
+
+        positionOnPlane = self.Total[0,0:3] + third * self.Total[0,3:6]
+        print(positionOnPlane)
+
  
 
 class Simulation:
@@ -128,6 +147,7 @@ class Simulation:
         self.Forces.append(Noise(total))
 
         self.Constraints.append(Ground(total))
+        self.Constraints.append(Collision(total))
 
 staticSimulation = hou.session.staticSimulation
 
@@ -138,8 +158,11 @@ if simFrame == 1:
     staticSimulation.InitiatialState()
 else:
     final = staticSimulation.update()
-    final_array = torch.flatten(final[:,0:3]).cpu().numpy()
-    geo.setPointFloatAttribValuesFromString("P", final_array)
+    final_pos = torch.flatten(final[:,0:3]).cpu().numpy()
+    final_vel = torch.flatten(final[:,3:6]).cpu().numpy()
+    geo.setPointFloatAttribValuesFromString("P", final_pos)
+    geo.setPointFloatAttribValuesFromString("v", final_vel)
+    
 end_time = time.time()    
 
 print("Compute time for " + str(staticPtnums) + " particles: " + str(end_time - start_time))

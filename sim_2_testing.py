@@ -48,3 +48,9 @@ print(third)
 length = rayOrigin + third * rayDirection
 print("length: ")
 print(length)
+
+# If DOT is less than 0.0001, it's a correct primitive = smallest DOT
+# If first DOT is negative, shoot ray backwards to get position on the plane
+# then with position on plane check for DOT product over all primitives, smallest is the correct primitive it collided with
+
+print(torch.rand(20,15))
