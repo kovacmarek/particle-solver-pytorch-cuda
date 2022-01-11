@@ -65,9 +65,11 @@ print(Vb)
 
 Vb = 2*(torch.matmul(torch.t(N_normal, dim0=0, dim1=1), N_Va)) * N_normal - N_Va
 
-
+##########################
 # INSIDE HOUDINI:
 
+node = hou.pwd()
+geo = node.geometry()
 inputs = node.inputs()
 geo1 = inputs[1].geometry()
 
@@ -80,24 +82,38 @@ import torch.nn.functional as f
 # Add code to modify contents of geo.
 # Use drop down menu to select examples.
 
+ptnums = len(geo.points())
+
 init_collision_norm = geo1.pointFloatAttribValues("N") 
 t_collision_norm = torch.tensor(init_collision_norm, device='cuda')
-normal = t_collision_norm.reshape(3,1)
+normal = t_collision_norm.reshape(1,3)
+print("normal :")
+print(normal)
 
 init_collision_norm = geo.pointFloatAttribValues("N") 
 t_collision_norm = torch.tensor(init_collision_norm, device='cuda')
-Va = t_collision_norm.reshape(3,1)
-#print(Va)
-
+Va = t_collision_norm.reshape(ptnums,3)
 
 torch.manual_seed(0)
 
 N_normal = f.normalize(normal, p=2, dim=0)
 N_Va = f.normalize(Va, p=2, dim=0)
+print(N_normal)
+print(N_Va)
+print("-----")
 
 
+Vb = 2*(torch.matmul(normal, torch.transpose(N_Va, dim0=0, dim1=1)))
+print("Vb1: ")
+print(Vb)
 
-Vb = 2*(torch.matmul(torch.transpose(N_normal, dim0=0, dim1=1), N_Va)) * N_normal - N_Va
+Vb = (torch.transpose(Vb, dim0=0, dim1=1) * normal)
+print("Vb2: ")
+print(Vb)
+
+Vb -= N_Va
+Vb *= -1
+print("Vb: ")
 print(Vb)
 
 final_pos = torch.flatten(Vb).cpu().numpy()
