@@ -4,44 +4,14 @@ import time
 import matplotlib.pyplot as plt
 import torch.nn.functional as f
 
-planeNormal = torch.tensor([0.0, 1.0])
-planeOrigin = torch.tensor([2.0, 2.0])
-rayOrigin = torch.tensor([4.0, 4.0])
-rayDirection = torch.tensor([1.0,-1.0])
+node = hou.pwd()
+geo = node.geometry()
+inputs = node.inputs()
+geo1 = inputs[1].geometry()
 
 
-print("planeNormal: ")
-print(planeNormal)
-print("planeOrigin: ")
-print(planeOrigin)
-print("rayOrigin: ")
-print(rayOrigin)
-print("rayDirection: ")
-print(rayDirection)
-
-
-first = torch.dot(planeNormal, rayOrigin - planeOrigin)
-print("first: ")
-print(first)
-
-second = torch.dot(planeNormal, -rayDirection)
-print("second: ")
-print(second)
-
-third = first/second
-print("third: ")
-print(third)
-
-length = rayOrigin + third * rayDirection
-print("length: ")
-print(length)
-
-# If DOT is less than 0.0001, it's a correct primitive = smallest DOT
-# If first DOT is negative, shoot ray backwards to get position on the plane
-# then with position on plane check for DOT product over all primitives, smallest is the correct primitive it collided with
-
-
-# Compute distance
+# ----- FIND CLOSEST PRIM AND IT'S POS & NORMAL ----
+##########################
 
 ptnums = len(geo.points())
 collisionPtnums = len(geo1.points())
@@ -96,28 +66,38 @@ print(particlesTotal)
 final_pos = torch.flatten(particlesTotal[:,6:9]).cpu().numpy()
 geo.setPointFloatAttribValuesFromString("P", final_pos)
 
+# ----- PROJECT RAY ONTO PRIMITIVE ----
+##########################
 
+init = particlesTotal[:,0:3] - particlesTotal[:,6:9]
+first = torch.sum(particlesTotal[:,9:12] * init, dim=1)
+print("first: ")
+print(first)
+
+second = torch.sum(particlesTotal[:,9:12] * -particlesTotal[:,3:6], dim=1)
+print("second: ")
+print(second)
+
+third = first/second
+print("third: ")
+print(third)
+
+print("particlesTotal[:,3:6]: ")
+print(torch.transpose(particlesTotal[:,3:6], dim0=0, dim1=1))
+
+length = third * torch.transpose(particlesTotal[:,3:6], dim0=0, dim1=1)
+length = torch.transpose(length, dim0=0, dim1=1)
+length += particlesTotal[:,0:3]
+print("length: ")
+print(length)
+
+
+final_vel = torch.flatten(length).cpu().numpy()
+geo.setPointFloatAttribValuesFromString("P", final_vel)
 
 # ----- REFLECTION OF VECTOR ----
-
 ##########################
-# INSIDE HOUDINI:
 
-node = hou.pwd()
-geo = node.geometry()
-inputs = node.inputs()
-geo1 = inputs[1].geometry()
-
-import torch
-import numpy as np
-import time
-import matplotlib.pyplot as plt
-import torch.nn.functional as f
-
-# Add code to modify contents of geo.
-# Use drop down menu to select examples.
-
-ptnums = len(geo.points())
 
 init_collision_norm = geo1.pointFloatAttribValues("N") 
 t_collision_norm = torch.tensor(init_collision_norm, device='cuda')
