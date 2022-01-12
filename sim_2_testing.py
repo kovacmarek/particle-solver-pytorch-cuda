@@ -16,7 +16,7 @@ geo1 = inputs[1].geometry()
 ptnums = len(geo.points())
 collisionPtnums = len(geo1.points())
 
-collisionTotal = torch.zeros(collisionPtnums,6, device='cuda')
+collisionTotal = torch.zeros(collisionPtnums,7, device='cuda')
 particlesTotal = torch.zeros(ptnums,12, device='cuda')
 
 # collision append
@@ -40,13 +40,19 @@ particlesTotal[:,3:6] = t_particles_norm.reshape(ptnums,3)
 torch.manual_seed(0)
 
 # compute distance
-dist = torch.cdist(collisionTotal[:,0:3], particlesTotal[:,0:3], p=2.0)
+dist_A = torch.cdist(collisionTotal[:,0:3], particlesTotal[:,0:3], p=2.0)
+dist_B = torch.cdist(collisionTotal[:,0:3], particlesTotal[:,3:6], p=2.0)
+dist_both = torch.add(dist_A, dist_B)
 
-print("dist: ")
-print(dist)
+print("dist_A: ")
+print(dist_A)
+print("dist_B: ")
+print(dist_B)
+print("dist_both: ")
+print(dist_both)
 
 # find minarg for each collumn (particle)
-mina = torch.argmin(dist, dim=0)
+mina = torch.argmin(dist_both, dim=0)
 print("mina: ")
 print(mina)
 
@@ -55,6 +61,10 @@ print(particlesTotal[:,0:3])
 
 print("collisionTotal[:,0:3]: ")
 print(collisionTotal[:,0:3])
+
+mina_export = torch.flatten(mina).double().cpu().numpy()
+print(mina_export)
+#geo.setPointFloatAttribValues("mina", mina_export)
 
 # append each particle it's closest primitive's position
 particlesTotal[:,6:9] = collisionTotal[:,0:3].index_select(0, mina)
@@ -94,6 +104,10 @@ print(length)
 
 final_vel = torch.flatten(length).cpu().numpy()
 geo.setPointFloatAttribValuesFromString("P", final_vel)
+
+mina_export = torch.flatten(mina).double().cpu().numpy()
+print(mina_export)
+geo.setPointFloatAttribValues("mina", mina_export)
 
 # ----- REFLECTION OF VECTOR ----
 ##########################
