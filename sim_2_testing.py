@@ -41,7 +41,7 @@ torch.manual_seed(0)
 
 # compute distance
 dist_A = torch.cdist(collisionTotal[:,0:3], particlesTotal[:,0:3], p=2.0)
-dist_B = torch.cdist(collisionTotal[:,0:3], particlesTotal[:,3:6], p=2.0)
+dist_B = torch.cdist(collisionTotal[:,0:3], particlesTotal[:,3:6] + particlesTotal[:,0:3], p=2.0)
 dist_both = torch.add(dist_A, dist_B)
 
 print("dist_A: ")
@@ -64,17 +64,11 @@ print(collisionTotal[:,0:3])
 
 mina_export = torch.flatten(mina).double().cpu().numpy()
 print(mina_export)
-#geo.setPointFloatAttribValues("mina", mina_export)
+geo.setPointFloatAttribValues("mina", mina_export)
 
-# append each particle it's closest primitive's position
-particlesTotal[:,6:9] = collisionTotal[:,0:3].index_select(0, mina)
-particlesTotal[:,9:12] = collisionTotal[:,3:6].index_select(0, mina)
-
-final_dir = particlesTotal[:,6:9] - particlesTotal[:,0:3]
-
-print(particlesTotal)
-final_pos = torch.flatten(particlesTotal[:,6:9]).cpu().numpy()
-geo.setPointFloatAttribValuesFromString("P", final_pos)
+# write to detail
+geo.addArrayAttrib(hou.attribType.Global, "data", hou.attribData.Float, tuple_size=1)
+geo.setGlobalAttribValue("data", mina_export)
 
 # ----- PROJECT RAY ONTO PRIMITIVE ----
 ##########################
