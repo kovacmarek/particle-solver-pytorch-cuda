@@ -16,8 +16,8 @@ geo1 = inputs[1].geometry()
 ptnums = len(geo.points())
 collisionPtnums = len(geo1.points())
 
-collisionTotal = torch.zeros(collisionPtnums,7, device='cuda')
-particlesTotal = torch.zeros(ptnums,12, device='cuda')
+collisionTotal = torch.zeros(collisionPtnums,7, device='cuda') #7th value is distance
+particlesTotal = torch.zeros(ptnums,7, device='cuda') # 13th value is boolean if it's intersecting
 
 # collision append
 init_collision_pos = geo1.pointFloatAttribValues("P") 
@@ -39,46 +39,48 @@ particlesTotal[:,3:6] = t_particles_norm.reshape(ptnums,3)
 
 torch.manual_seed(0)
 
-# compute distance
+# Compute distance
 dist_A = torch.cdist(collisionTotal[:,0:3], particlesTotal[:,0:3], p=2.0)
 dist_B = torch.cdist(collisionTotal[:,0:3], particlesTotal[:,3:6] + particlesTotal[:,0:3], p=2.0)
 dist_both = torch.add(dist_A, dist_B)
 
-print("dist_A: ")
-print(dist_A)
-print("dist_B: ")
-print(dist_B)
-print("dist_both: ")
-print(dist_both)
-
-# find minarg for each collumn (particle)
+# Find minarg for each collumn (particle)
 mina = torch.argmin(dist_both, dim=0)
-print("mina: ")
-print(mina)
 
-print("particle_pos: ")
-print(particlesTotal[:,0:3])
+# Check if DOT is negative with primitive it intersects == inside the geometry
+normalOfChosen = collisionTotal[:,3:6].index_select(0, mina)
+dotprod = torch.sum(particlesTotal[:,0:3] * normalOfChosen, dim=-1).double()
 
-print("collisionTotal[:,0:3]: ")
-print(collisionTotal[:,0:3])
+# Initialize intersect tensor, if particles is facing back-face, it's value stays, otherwise it's set to -1
+intersection = torch.zeros(1,ptnums)
+intersection = torch.where(dotprod < 0.0, mina, -1)
+
+# Append intersection as 13th value for each particle
+particlesTotal[:,-1] = intersection
+print("intersection: ")
+print(intersection)
 
 mina_export = torch.flatten(mina).double().cpu().numpy()
-print(mina_export)
 geo.setPointFloatAttribValues("mina", mina_export)
+intersectedPrims = intersection[intersection!=-1].int()
+print(intersectedPrims)
 
-# write to detail
-geo.addArrayAttrib(hou.attribType.Global, "data", hou.attribData.Float, tuple_size=1)
-geo.setGlobalAttribValue("data", mina_export)
+# indices of particles that intersected
+intersectedPtnums = (intersection != -1).nonzero(as_tuple=True)[0]
+
 
 # ----- PROJECT RAY ONTO PRIMITIVE ----
 ##########################
 
-init = particlesTotal[:,0:3] - particlesTotal[:,6:9]
-first = torch.sum(particlesTotal[:,9:12] * init, dim=1)
+init = particlesTotal[:,0:3].index_select(0, intersectedPtnums) - collisionTotal[:,0:3].index_select(0, intersectedPrims)
+print("init: ")
+print(init)
+
+first = torch.sum(collisionTotal[:,3:6].index_select(0, intersectedPtnums) * init, dim=1)
 print("first: ")
 print(first)
 
-second = torch.sum(particlesTotal[:,9:12] * -particlesTotal[:,3:6], dim=1)
+second = torch.sum(collisionTotal[:,3:6].index_select(0, intersectedPrims) * -particlesTotal[:,3:6].index_select(0, intersectedPtnums), dim=1)
 print("second: ")
 print(second)
 
@@ -87,14 +89,19 @@ print("third: ")
 print(third)
 
 print("particlesTotal[:,3:6]: ")
-print(torch.transpose(particlesTotal[:,3:6], dim0=0, dim1=1))
+print(torch.transpose(particlesTotal[:,3:6].index_select(0, intersectedPtnums), dim0=0, dim1=1))
 
-length = third * torch.transpose(particlesTotal[:,3:6], dim0=0, dim1=1)
+length = third * torch.transpose(particlesTotal[:,3:6].index_select(0, intersectedPtnums), dim0=0, dim1=1)
 length = torch.transpose(length, dim0=0, dim1=1)
-length += particlesTotal[:,0:3]
+length += particlesTotal[:,0:3].index_select(0, intersectedPtnums)
 print("length: ")
 print(length)
 
+print("original pos: ")
+print(particlesTotal[:,0:3])
+print("projected pos: ")
+particlesTotal[:,0:3].index_copy_(0, intersectedPtnums, length)
+print(particlesTotal[:,0:3])
 
 final_vel = torch.flatten(length).cpu().numpy()
 geo.setPointFloatAttribValuesFromString("P", final_vel)
@@ -102,6 +109,9 @@ geo.setPointFloatAttribValuesFromString("P", final_vel)
 mina_export = torch.flatten(mina).double().cpu().numpy()
 print(mina_export)
 geo.setPointFloatAttribValues("mina", mina_export)
+
+
+
 
 # ----- REFLECTION OF VECTOR ----
 ##########################
