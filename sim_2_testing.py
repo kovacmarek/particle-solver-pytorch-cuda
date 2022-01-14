@@ -51,6 +51,10 @@ mina = torch.argmin(dist_both, dim=0)
 normalOfChosen = collisionTotal[:,3:6].index_select(0, mina)
 dotprod = torch.sum(particlesTotal[:,0:3] * normalOfChosen, dim=-1).double()
 
+#### CORRECT DOT PRODUCT ##### TODO
+# dotprod = torch.sum(normalOfChosen * (particlesTotal[:,0:3] - posOfChosen), dim=-1).double() 
+#### CORRECT DOT PRODUCT ##### TODO
+
 # Initialize intersect tensor, if particles is facing back-face, it's value stays, otherwise it's set to -1
 intersection = torch.zeros(1,ptnums)
 intersection = torch.where(dotprod < 0.0, mina, -1)
@@ -59,96 +63,69 @@ intersection = torch.where(dotprod < 0.0, mina, -1)
 particlesTotal[:,-1] = intersection
 print("intersection: ")
 print(intersection)
+print("\n")
 
 mina_export = torch.flatten(mina).double().cpu().numpy()
 geo.setPointFloatAttribValues("mina", mina_export)
 intersectedPrims = intersection[intersection!=-1].int()
+print("intersectedPrims: ")
 print(intersectedPrims)
+print("\n")
+
 
 # indices of particles that intersected
 intersectedPtnums = (intersection != -1).nonzero(as_tuple=True)[0]
 
+print("intersectedPtnums: ")
+print(intersectedPtnums)
+print("\n")
 
+#########################################
 # ----- PROJECT RAY ONTO PRIMITIVE ----
-##########################
+#########################################
 
 init = particlesTotal[:,0:3].index_select(0, intersectedPtnums) - collisionTotal[:,0:3].index_select(0, intersectedPrims)
-print("init: ")
-print(init)
 
 first = torch.sum(collisionTotal[:,3:6].index_select(0, intersectedPtnums) * init, dim=1)
-print("first: ")
-print(first)
-
 second = torch.sum(collisionTotal[:,3:6].index_select(0, intersectedPrims) * -particlesTotal[:,3:6].index_select(0, intersectedPtnums), dim=1)
-print("second: ")
-print(second)
-
 third = first/second
-print("third: ")
-print(third)
 
-print("particlesTotal[:,3:6]: ")
-print(torch.transpose(particlesTotal[:,3:6].index_select(0, intersectedPtnums), dim0=0, dim1=1))
+projectedPos = third * torch.transpose(particlesTotal[:,3:6].index_select(0, intersectedPtnums), dim0=0, dim1=1)
+projectedPos = torch.transpose(projectedPos, dim0=0, dim1=1)
+projectedPos += particlesTotal[:,0:3].index_select(0, intersectedPtnums)
+print("projectedPos: ")
+print(projectedPos)
+print("\n")
 
-length = third * torch.transpose(particlesTotal[:,3:6].index_select(0, intersectedPtnums), dim0=0, dim1=1)
-length = torch.transpose(length, dim0=0, dim1=1)
-length += particlesTotal[:,0:3].index_select(0, intersectedPtnums)
-print("length: ")
-print(length)
-
-print("original pos: ")
-print(particlesTotal[:,0:3])
-print("projected pos: ")
-particlesTotal[:,0:3].index_copy_(0, intersectedPtnums, length)
-print(particlesTotal[:,0:3])
-
-final_vel = torch.flatten(length).cpu().numpy()
-geo.setPointFloatAttribValuesFromString("P", final_vel)
-
-mina_export = torch.flatten(mina).double().cpu().numpy()
-print(mina_export)
-geo.setPointFloatAttribValues("mina", mina_export)
-
-
-
-
+#########################################
 # ----- REFLECTION OF VECTOR ----
-##########################
+#########################################
 
+# Compute normal from current position of the particle to projected position on the prim
+correct_ParticleNormal = particlesTotal[:,0:3].index_select(0, intersectedPtnums) - projectedPos 
 
-init_collision_norm = geo1.pointFloatAttribValues("N") 
-t_collision_norm = torch.tensor(init_collision_norm, device='cuda')
-normal = t_collision_norm.reshape(1,3)
-print("normal :")
-print(normal)
-
-init_collision_norm = geo.pointFloatAttribValues("N") 
-t_collision_norm = torch.tensor(init_collision_norm, device='cuda')
-Va = t_collision_norm.reshape(ptnums,3)
-
-torch.manual_seed(0)
-
+# Initialize / Normalize
+normal = collisionTotal[:,3:6].index_select(0, intersectedPrims)
 N_normal = f.normalize(normal, p=2, dim=0)
-N_Va = f.normalize(Va, p=2, dim=0)
-print(N_normal)
-print(N_Va)
-print("-----")
+N_ParticleNormal = f.normalize(correct_ParticleNormal, p=2, dim=0)
 
-
-Vb = 2*(torch.matmul(normal, torch.transpose(N_Va, dim0=0, dim1=1)))
-print("Vb1: ")
-print(Vb)
-
-Vb = (torch.transpose(Vb, dim0=0, dim1=1) * normal)
-print("Vb2: ")
-print(Vb)
-
-Vb -= N_Va
+# Reflection vector
+Vb = 2*(torch.sum(normal * N_ParticleNormal , dim=-1))
+Vb = (Vb.reshape(intersectedPtnums.size(),1) * normal) # TODO NUMBER 6 TO BE NUMBER OF ITEMS IN THE ARRAY: intersectedPtnums
+Vb -= N_ParticleNormal
 Vb *= -1
-print("Vb: ")
-print(Vb)
 
-final_pos = torch.flatten(Vb).cpu().numpy()
-print(final_pos)
-geo.setPointFloatAttribValuesFromString("N", final_pos)
+# Correcting normal vector
+normalScale = N_ParticleNormal / correct_ParticleNormal
+Vb = Vb / normalScale
+
+# Setting variables
+Vb_final = projectedPos + Vb # Set new position
+final_pos = particlesTotal[:,0:3].index_copy_(0, intersectedPtnums, Vb_final) # INSERT POSITION AT GIVEN INDICES
+
+final_pos = torch.flatten(final_pos).cpu().numpy()
+geo.setPointFloatAttribValuesFromString("P", final_pos)
+
+final_vel = particlesTotal[:,3:6].index_copy_(0, intersectedPtnums, -Vb)
+final_vel = torch.flatten(final_vel).cpu().numpy()
+geo.setPointFloatAttribValuesFromString("N", final_vel)
