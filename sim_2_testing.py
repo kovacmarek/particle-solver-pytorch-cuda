@@ -44,6 +44,24 @@ dist_A = torch.cdist(collisionTotal[:,0:3], particlesTotal[:,0:3], p=2.0)
 dist_B = torch.cdist(collisionTotal[:,0:3], particlesTotal[:,3:6] + particlesTotal[:,0:3], p=2.0)
 dist_both = torch.add(dist_A, dist_B)
 
+# Closest point on the line
+#print("dpc: ")
+#lineDir = f.normalize(particlesTotal[:,3:6], p=2, dim=0)
+#v = collisionTotal[:,0:3].unsqueeze(1) - particlesTotal[:,0:3].unsqueeze(0)
+#print("v: ")
+#print(v)
+#d = torch.sum(v * lineDir,dim=2)
+#print("d: ")
+#print(d)
+#d = torch.min(d, dim=0)
+#print(d.values)
+
+#fin = torch.transpose(lineDir,dim0=0,dim1=1) * d.values
+#fin = torch.transpose(lineDir,dim0=1,dim1=1)
+#print("fin: ")
+#print(fin)
+
+
 # Find minarg for each collumn (particle)
 mina = torch.argmin(dist_both, dim=0)
 
