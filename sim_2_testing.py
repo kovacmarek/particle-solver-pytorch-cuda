@@ -111,7 +111,7 @@ N_ParticleNormal = f.normalize(correct_ParticleNormal, p=2, dim=0)
 
 # Reflection vector
 Vb = 2*(torch.sum(normal * N_ParticleNormal , dim=-1))
-Vb = (Vb.reshape(intersectedPtnums.size(),1) * normal) # TODO NUMBER 6 TO BE NUMBER OF ITEMS IN THE ARRAY: intersectedPtnums
+Vb = (Vb.reshape(intersectedPtnums.size(0),1) * normal) # TODO NUMBER 6 TO BE NUMBER OF ITEMS IN THE ARRAY: intersectedPtnums
 Vb -= N_ParticleNormal
 Vb *= -1
 
