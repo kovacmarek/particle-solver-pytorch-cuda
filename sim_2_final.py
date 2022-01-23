@@ -69,24 +69,6 @@ class Damping:
     def Apply( self ):
         return torch.mul(self.particlesTotal[:,3:6], self.Scaling )
 
-class Ground:
-    def __init__( self, total, loss = 0.9 ):
-        self.particlesTotal = total
-        self.Loss = torch.ones(1,ptnums, device='cuda')
-        self.Loss = loss
-        
-    def Apply( self ):              
-        # Create Boolean collision mask
-        collision_mask = torch.where(self.particlesTotal.double()[:,1] <= 0.0, True, False) * -1
-        collision_mask = collision_mask.double()
-        collision_mask = torch.where(collision_mask == 0.0, 1.0, collision_mask * self.Loss)
-
-        # Apply Pos
-        self.particlesTotal[:,1] = torch.t(self.particlesTotal[:,1]) * collision_mask
-
-        # Apply Vel
-        self.particlesTotal[:,4] = torch.t(self.particlesTotal[:,4]) * collision_mask
-
 class CollisionDetection():
     def __init__(self, particles, collision) -> None:
         self.particlesTotal = particles
@@ -111,7 +93,13 @@ class CollisionDetection():
         self.intersection = torch.where(dotprod < 0.0, mina, -1)
 
         # Append self.intersection as 13th value for each particle
+        print("before: ")
+        print(self.particlesTotal)
+
         self.particlesTotal[:,-1] = self.intersection
+
+        print("after: ")
+        print(self.particlesTotal)
 
         mina_export = torch.flatten(mina).double().cpu().numpy()
         geo.setPointFloatAttribValues("mina", mina_export)
@@ -119,6 +107,11 @@ class CollisionDetection():
 
         # indices of particles that intersected
         self.intersectedPtnums = (self.intersection != -1).nonzero(as_tuple=True)[0]
+        print("self.intersectedPtnums: ")
+        print(self.intersectedPtnums)
+
+        print("self.intersectedPrims: ")
+        print(self.intersectedPrims)
 
     #########################################
     # ----- PROJECT RAY ONTO PRIMITIVE ----
@@ -168,17 +161,17 @@ class CollisionDetection():
         
     def Apply(self):
         self.findIntersection()
-        self.projectOntoPrim()
+        # self.projectOntoPrim()
 
-        final_step = self.reflectVector()
-        final_pos = final_step[0]
-        final_vel = final_step[1]
+        # final_step = self.reflectVector()
+        # final_pos = final_step[0]
+        # final_vel = final_step[1]
         
-        # Apply Pos
-        self.particlesTotal[:,0:3] = final_pos
+        # # Apply Pos
+        # self.particlesTotal[:,0:3] += final_pos
 
-        # Apply Vel
-        self.particlesTotal[:,3:6] = final_vel
+        # # Apply Vel
+        # self.particlesTotal[:,3:6] += final_vel
 
 class Simulation:
     def __init__(self) -> None:
@@ -217,7 +210,7 @@ class Simulation:
         self.Forces.append(Damping(self.particlesTotal))
         self.Forces.append(Noise(self.particlesTotal))
 
-        self.Constraints.append(Ground(self.particlesTotal))
+        #self.Constraints.append(Ground(self.particlesTotal))
         self.Constraints.append(CollisionDetection(self.particlesTotal, self.collisionTotal))
 
     def update(self):
