@@ -1,31 +1,35 @@
+import torch
+import numpy as np
+import time
+import matplotlib.pyplot as plt
+import torch.nn.functional as f
+
 node = hou.pwd()
 geo = node.geometry()
 inputs = node.inputs()
 geo1 = inputs[1].geometry()
 
-# Add code to modify contents of geo.
-# Use drop down menu to select examples.
+ptnums = len(geo.points())
+collisionPtnums = len(geo1.points())
 
-import torch
-import numpy as np
-import time
-import matplotlib.pyplot as plt
+collisionTotal = torch.zeros(collisionPtnums,7, device='cuda') # 7th value is distance
+particlesTotal = torch.zeros(ptnums,8, device='cuda') # 7th value is boolean if it's intersecting
 
 torch.manual_seed(0)
 simFrame = int(hou.frame()) - 1000
 
 # Load to RAM at the begining 
-staticPtnums = None
+ptnums = None
 if simFrame == 1:
     hou.session.staticSimulation = None
-    hou.session.staticPtnums = None
-    hou.session.staticCollisionPtnums = None
-    staticPtnums = len(geo.points())
-    staticCollisionPtnums = len(geo1.points())
-    hou.session.staticPtnums = staticPtnums
+    hou.session.ptnums = None
+    hou.session.collisionPtnums = None
+    ptnums = len(geo.points())
+    collisionPtnums = len(geo1.points())
+    hou.session.ptnums = ptnums
 else:
-    staticPtnums = hou.session.staticPtnums
-    staticCollisionPtnums = hou.session.staticCollisionPtnums
+    ptnums = hou.session.ptnums
+    collisionPtnums = hou.session.collisionPtnums
 
 # Globals
 negative_vector = torch.tensor([-1.0, -1.0, -1.0], device='cuda')
@@ -34,91 +38,150 @@ start_time = time.time()
 
 class Gravity:
     def __init__(self, total) -> None:
-        self.Total = total
-        self.Acc = torch.zeros(staticPtnums,3, device='cuda')
+        self.particlesTotal = total
+        self.Acc = torch.zeros(ptnums,3, device='cuda')
         self.Acc[:,1] = -9.8 # Y-axis
-        # self.Acc[:,0] = torch.add(self.Acc[:,0], torch.randn(staticPtnums, device='cuda'))
-        # self.Acc[:,2] = torch.add(self.Acc[:,0], torch.randn(staticPtnums, device='cuda'))
+        # self.Acc[:,0] = torch.add(self.Acc[:,0], torch.randn(ptnums, device='cuda'))
+        # self.Acc[:,2] = torch.add(self.Acc[:,0], torch.randn(ptnums, device='cuda'))
 
     def Apply(self):
-        mass = self.Total[:,-1]
+        mass = self.particlesTotal[:,6]
         acc = torch.transpose(self.Acc, 0, 1)
-        return torch.transpose(mass * acc, dim0=0,dim1=1) # staticPtnums x 3
+        return torch.transpose(mass * acc, dim0=0,dim1=1) # ptnums x 3
 
 class Noise:
     def __init__(self, total) -> None:
-        self.Total = total
-        self.Acc = torch.zeros(staticPtnums,3, device='cuda')
-        self.Acc[:,0] = torch.add(self.Acc[:,0], torch.randn(staticPtnums, device='cuda')) # X
+        self.particlesTotal = total
+        self.Acc = torch.zeros(ptnums,3, device='cuda')
+        self.Acc[:,0] = torch.add(self.Acc[:,0], torch.randn(ptnums, device='cuda')) # X
         torch.manual_seed(1)
-        self.Acc[:,1] = torch.add(self.Acc[:,0], torch.randn(staticPtnums, device='cuda')) # Y
+        self.Acc[:,1] = torch.add(self.Acc[:,0], torch.randn(ptnums, device='cuda')) # Y
         torch.manual_seed(2)
-        self.Acc[:,2] = torch.add(self.Acc[:,0], torch.randn(staticPtnums, device='cuda')) # Z
+        self.Acc[:,2] = torch.add(self.Acc[:,0], torch.randn(ptnums, device='cuda')) # Z
 
     def Apply(self):
-        mass = self.Total[:,-1]
+        mass = self.particlesTotal[:,-1]
         acc = torch.transpose(self.Acc, 0, 1)
         torch.manual_seed(0) # reset seed
-        return torch.transpose(mass * acc, dim0=0,dim1=1) # staticPtnums x 3
+        return torch.transpose(mass * acc, dim0=0,dim1=1) # ptnums x 3
 
 class Damping:
     def __init__( self, total, scaling = -1.0 ):
-        self.Total = total
+        self.particlesTotal = total
         self.Scaling = torch.tensor([scaling, scaling, scaling], device='cuda')
     def Apply( self ):
-        return torch.mul(self.Total[:,3:6], self.Scaling )
+        return torch.mul(self.particlesTotal[:,3:6], self.Scaling )
 
 class Ground:
     def __init__( self, total, loss = 0.9 ):
-        self.Total = total
-        self.Loss = torch.ones(1,staticPtnums, device='cuda')
+        self.particlesTotal = total
+        self.Loss = torch.ones(1,ptnums, device='cuda')
         self.Loss = loss
         
     def Apply( self ):              
         # Create Boolean collision mask
-        collision_mask = torch.where(self.Total.double()[:,1] <= 0.0, True, False) * -1
+        collision_mask = torch.where(self.particlesTotal.double()[:,1] <= 0.0, True, False) * -1
         collision_mask = collision_mask.double()
         collision_mask = torch.where(collision_mask == 0.0, 1.0, collision_mask * self.Loss)
 
         # Apply Pos
-        self.Total[:,1] = torch.t(self.Total[:,1]) * collision_mask
+        self.particlesTotal[:,1] = torch.t(self.particlesTotal[:,1]) * collision_mask
 
         # Apply Vel
-        self.Total[:,4] = torch.t(self.Total[:,4]) * collision_mask
+        self.particlesTotal[:,4] = torch.t(self.particlesTotal[:,4]) * collision_mask
 
-class Collision:
-    def __init__( self, total, collision, loss = 0.9 ):
-        self.Total = total
-        self.Loss = torch.ones(1,staticPtnums, device='cuda')
-        self.Loss = loss
-        self.CollisionGeo = collision
-        
-    def Apply( self ):              
+class CollisionDetection():
+    def __init__(self, particles, collision) -> None:
+        self.particlesTotal = particles
+        self.collisionTotal = collision
 
-        # input primitive's position and normal
-        planeNormal = self.CollisionGeo[:,3:6]
-        planeOrigin = self.CollisionGeo[:,0:3]
+    def findIntersection(self):
+        # Compute distance
+        dist_A = torch.cdist(self.collisionTotal[:,0:3], self.particlesTotal[:,0:3], p=2.0)
+        dist_B = torch.cdist(self.collisionTotal[:,0:3], self.particlesTotal[:,3:6] + self.particlesTotal[:,0:3], p=2.0)
+        dist_both = torch.add(dist_A, dist_B)
 
+        # Find minarg for each collumn (particle)
+        mina = torch.argmin(dist_both, dim=0)
 
-        # find intersect point position on all primitive
-        first = torch.matmul(planeNormal, self.Total[:,0:3] - planeOrigin)
-        print("first: ")
-        print(first)
-        print(-self.Total[:,3:6])
-        second = torch.matmul(planeNormal, torch.transpose(-self.Total[:,3:6], dim0=0, dim1=1))
-        print("second: ")
-        print(second)
+        # Check if DOT is negative with primitive it intersects == inside the geometry
+        normalOfChosen = self.collisionTotal[:,3:6].index_select(0, mina)
+        posOfChosen = self.collisionTotal[:,0:3].index_select(0, mina)
+        dotprod = torch.sum(normalOfChosen * (self.particlesTotal[:,0:3] - posOfChosen), dim=-1).double() # corrected dot
 
+        # Initialize intersect tensor, if particles is facing back-face, it's value stays, otherwise it's set to -1
+        self.intersection = torch.zeros(1,ptnums)
+        self.intersection = torch.where(dotprod < 0.0, mina, -1)
+
+        # Append self.intersection as 13th value for each particle
+        self.particlesTotal[:,-1] = self.intersection
+
+        mina_export = torch.flatten(mina).double().cpu().numpy()
+        geo.setPointFloatAttribValues("mina", mina_export)
+        self.intersectedPrims = self.intersection[self.intersection!=-1].int()
+
+        # indices of particles that intersected
+        self.intersectedPtnums = (self.intersection != -1).nonzero(as_tuple=True)[0]
+
+    #########################################
+    # ----- PROJECT RAY ONTO PRIMITIVE ----
+    #########################################
+
+    def projectOntoPrim(self):
+        init = self.particlesTotal[:,0:3].index_select(0, self.intersectedPtnums) - self.collisionTotal[:,0:3].index_select(0, self.intersectedPrims)
+
+        first = torch.sum(self.collisionTotal[:,3:6].index_select(0, self.intersectedPrims) * init, dim=1)
+        second = torch.sum(self.collisionTotal[:,3:6].index_select(0, self.intersectedPrims) * -self.particlesTotal[:,3:6].index_select(0, self.intersectedPtnums), dim=1)
         third = first/second
-        print("third: ")
-        print(third)
 
-        positionOnPlane = self.Total[:,0:3] + third * self.Total[:,3:6]
-        print("PositionOnPlane: ")
+        self.projectedPos = third * torch.transpose(self.particlesTotal[:,3:6].index_select(0, self.intersectedPtnums), dim0=0, dim1=1)
+        self.projectedPos = torch.transpose(self.projectedPos, dim0=0, dim1=1)
+        self.projectedPos += self.particlesTotal[:,0:3].index_select(0, self.intersectedPtnums)
+
+    #########################################
+    # ----- REFLECTION OF VECTOR ----
+    #########################################
+
+    def reflectVector(self):
+        # Compute normal from current position of the particle to projected position on the prim
+        correct_ParticleNormal = particlesTotal[:,0:3].index_select(0, self.intersectedPtnums) - self.projectedPos 
+
+        # Initialize / Normalize
+        normal = collisionTotal[:,3:6].index_select(0, self.intersectedPrims)
+        N_normal = f.normalize(normal, p=2, dim=0)
+        N_ParticleNormal = f.normalize(correct_ParticleNormal, p=2, dim=0)
+
+        # Reflection vector
+        Vb = 2*(torch.sum(normal * N_ParticleNormal , dim=-1))
+        Vb = (Vb.reshape(self.intersectedPtnums.size(0),1) * normal)
+        Vb -= N_ParticleNormal
+        Vb *= -1
+
+        # Correcting normal vector
+        normalScale = N_ParticleNormal / correct_ParticleNormal
+        Vb = Vb / normalScale
+
+        # Setting variables
+        Vb_final = self.projectedPos + Vb # Set new position
+        final_pos = particlesTotal[:,0:3].index_copy_(0, self.intersectedPtnums, Vb_final) # INSERT POSITION AT GIVEN INDICES
+        final_v = self.projectedPos - Vb_final
+        final_vel = particlesTotal[:,3:6].index_copy_(0, self.intersectedPtnums, final_v) # INSERT VELOCITY AT GIVEN INDICES
+
+        return final_pos, final_vel
         
-        print(positionOnPlane)
+    def Apply(self):
+        self.findIntersection()
+        self.projectOntoPrim()
 
- 
+        final_step = self.reflectVector()
+        final_pos = final_step[0]
+        final_vel = final_step[1]
+        
+        # Apply Pos
+        self.particlesTotal[:,0:3] = final_pos
+
+        # Apply Vel
+        self.particlesTotal[:,3:6] = final_vel
 
 class Simulation:
     def __init__(self) -> None:
@@ -127,7 +190,7 @@ class Simulation:
         pass
 
     def update(self):
-        sumForce = torch.zeros(staticPtnums,3, device='cuda') # reset all forces
+        sumForce = torch.zeros(ptnums,3, device='cuda') # reset all forces
 
         # Accumulate Forces
         for force in self.Forces:
@@ -135,62 +198,49 @@ class Simulation:
             sumForce += torch.add(sumForce, a)
         
         # Symplectic Euler Integration
-        acc = torch.zeros(staticPtnums,3, device='cuda')        
-        normalized_mass = torch.div(1.0, self.Total[:,-1])
+        acc = torch.zeros(ptnums,3, device='cuda')        
+        normalized_mass = torch.div(1.0, self.particlesTotal[:,6])
         acc = torch.transpose(torch.mul(torch.transpose(sumForce, dim0=0, dim1=1), normalized_mass), dim0=0, dim1=1)
-        self.Total[:,3:6] += acc * TIME 
-        self.Total[:,0:3] += self.Total[:,3:6] * TIME 
+        self.particlesTotal[:,3:6] += acc * TIME 
+        self.particlesTotal[:,0:3] += self.particlesTotal[:,3:6] * TIME 
         
-        
+
         # Apply constraints
         for constraint in self.Constraints:
             constraint.Apply()
         
-        return self.Total # RETURN RESULT
+        return self.particlesTotal # RETURN RESULT
 
     def InitialState(self):
-        # --- GET POINTS ---
-        init_tensor = geo.pointFloatAttribValues("P")
-        t_init_tensor = torch.tensor(init_tensor, device='cuda')
-        pos = t_init_tensor.reshape(staticPtnums,3)
-
-        # --- GET COLLISION ---
-        # Fetch position
-        init_collision_pos = geo1.pointFloatAttribValues("P")
+        # collision append
+        init_collision_pos = geo1.pointFloatAttribValues("P") 
         t_collision_pos = torch.tensor(init_collision_pos, device='cuda')
-        t_collision_pos = t_collision_pos.reshape(staticCollisionPtnums,3)
+        collisionTotal[:,0:3] = t_collision_pos.reshape(collisionPtnums,3)
 
-        # Fetch normal
         init_collision_norm = geo1.pointFloatAttribValues("N") 
         t_collision_norm = torch.tensor(init_collision_norm, device='cuda')
-        t_collision_norm = t_collision_norm.reshape(staticCollisionPtnums,3)
-        
-        
-        # Append pos & norm to self.CollisionGeo tensor
-        self.CollisionGeo = torch.zeros(staticCollisionPtnums,6, device='cuda')
-        self.CollisionGeo[:,0:3] = t_collision_pos # append position
-        self.CollisionGeo[:,3:6] = t_collision_norm # append normal
-        # print(self.CollisionGeo)
-        
-        # --- INITIALIZE ATTRIBUTES ---
-        pos[:,1] = 150
-        vel = torch.rand(staticPtnums,3, device='cuda')
-        mass = torch.ones(staticPtnums,1, device='cuda')
-        mass[:,0] = 10
+        collisionTotal[:,3:6] = t_collision_norm.reshape(collisionPtnums,3)
 
-        # --- APPEND POINT ATTRIBS TO TENSOR ---
-        total = torch.zeros(staticPtnums,7, device='cuda')
-        total[:,0:3] = pos[:,:]
-        total[:,3:6] = vel[:,:]
-        total[:,-1] = mass[0,:]
-        self.Total = total
+        # particles append
+        init_particles_pos = geo.pointFloatAttribValues("P") 
+        t_particles_pos = torch.tensor(init_particles_pos, device='cuda')
+        particlesTotal[:,0:3] = t_particles_pos.reshape(ptnums,3)
+
+        init_particles_norm = geo.pointFloatAttribValues("v") 
+        t_particles_norm = torch.tensor(init_particles_norm, device='cuda')
+        particlesTotal[:,3:6] = t_particles_norm.reshape(ptnums,3)
+        
+        # --- SET MASS ---
+        mass = torch.ones(ptnums,1, device='cuda')
+        mass[:,0] = 10
+        particlesTotal[:,6] = mass[0,:] # 7th value is mass, 8th is intersection boolean
 
         # self.Forces.append(Gravity(total))
-        self.Forces.append(Damping(total))
-        self.Forces.append(Noise(total))
+        self.Forces.append(Damping(self.particlesTotal))
+        self.Forces.append(Noise(self.particlesTotal))
 
-        self.Constraints.append(Ground(total))
-        self.Constraints.append(Collision(total,self.CollisionGeo))
+        self.Constraints.append(Ground(self.particlesTotal))
+        self.Constraints.append(CollisionDetection(self.particlesTotal,self.CollisionGeo))
 
 
 staticSimulation = hou.session.staticSimulation
@@ -209,4 +259,4 @@ else:
     
 end_time = time.time()    
 
-print("Compute time for " + str(staticPtnums) + " particles: " + str(end_time - start_time))
+print("Compute time for " + str(ptnums) + " particles: " + str(end_time - start_time))

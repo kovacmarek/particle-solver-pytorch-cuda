@@ -17,7 +17,7 @@ ptnums = len(geo.points())
 collisionPtnums = len(geo1.points())
 
 collisionTotal = torch.zeros(collisionPtnums,7, device='cuda') #7th value is distance
-particlesTotal = torch.zeros(ptnums,7, device='cuda') # 7th value is boolean if it's intersecting
+particlesTotal = torch.zeros(ptnums,8, device='cuda') # 7th value is boolean if it's intersecting
 
 # collision append
 init_collision_pos = geo1.pointFloatAttribValues("P") 
