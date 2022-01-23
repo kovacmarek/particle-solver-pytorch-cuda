@@ -44,8 +44,9 @@ start_time = time.time()
 class FindIntersection():
     def __init__(self, particles, collision) -> None:
         self.particlesTotal = particles
-        self.collisionTotal = collision   
-
+        self.collisionTotal = collision 
+          
+    def compute(self):
         # Compute distance
         dist_A = torch.cdist(self.collisionTotal[:,0:3], self.particlesTotal[:,0:3], p=2.0)
         dist_B = torch.cdist(self.collisionTotal[:,0:3], self.particlesTotal[:,3:6] + self.particlesTotal[:,0:3], p=2.0)
@@ -82,6 +83,7 @@ class ProjectOntoPrim():
         self.particlesTotal = particles
         self.collisionTotal = collision   
 
+    def compute(self):
         init = self.particlesTotal[:,0:3].index_select(0, self.intersectedPtnums) - self.collisionTotal[:,0:3].index_select(0, self.intersectedPrims)
 
         first = torch.sum(self.collisionTotal[:,3:6].index_select(0, self.intersectedPrims) * init, dim=1)
@@ -101,35 +103,40 @@ class ReflectVector():
         self.particlesTotal = particles
         self.collisionTotal = collision  
 
-        # Compute normal from current position of the particle to projected position on the prim
-        correct_ParticleNormal = particlesTotal[:,0:3].index_select(0, self.intersectedPtnums) - self.projectedPos 
+        def compute(self):
+            # Compute normal from current position of the particle to projected position on the prim
+            correct_ParticleNormal = particlesTotal[:,0:3].index_select(0, self.intersectedPtnums) - self.projectedPos 
 
-        # Initialize / Normalize
-        normal = collisionTotal[:,3:6].index_select(0, self.intersectedPrims)
-        N_normal = f.normalize(normal, p=2, dim=0)
-        N_ParticleNormal = f.normalize(correct_ParticleNormal, p=2, dim=0)
+            # Initialize / Normalize
+            normal = collisionTotal[:,3:6].index_select(0, self.intersectedPrims)
+            N_normal = f.normalize(normal, p=2, dim=0)
+            N_ParticleNormal = f.normalize(correct_ParticleNormal, p=2, dim=0)
 
-        # Reflection vector
-        Vb = 2*(torch.sum(normal * N_ParticleNormal , dim=-1))
-        Vb = (Vb.reshape(self.intersectedPtnums.size(0),1) * normal) # TODO NUMBER 6 TO BE NUMBER OF ITEMS IN THE ARRAY: self.intersectedPtnums
-        Vb -= N_ParticleNormal
-        Vb *= -1
+            # Reflection vector
+            Vb = 2*(torch.sum(normal * N_ParticleNormal , dim=-1))
+            Vb = (Vb.reshape(self.intersectedPtnums.size(0),1) * normal)
+            Vb -= N_ParticleNormal
+            Vb *= -1
 
-        # Correcting normal vector
-        normalScale = N_ParticleNormal / correct_ParticleNormal
-        Vb = Vb / normalScale
+            # Correcting normal vector
+            normalScale = N_ParticleNormal / correct_ParticleNormal
+            Vb = Vb / normalScale
 
-        # Setting variables
-        Vb_final = self.projectedPos + Vb # Set new position
-        final_pos = particlesTotal[:,0:3].index_copy_(0, self.intersectedPtnums, Vb_final) # INSERT POSITION AT GIVEN INDICES
-        final_v = self.projectedPos - Vb_final
-        final_vel = particlesTotal[:,3:6].index_copy_(0, self.intersectedPtnums, final_v) # INSERT VELOCITY AT GIVEN INDICES
+            # Setting variables
+            Vb_final = self.projectedPos + Vb # Set new position
+            final_pos = particlesTotal[:,0:3].index_copy_(0, self.intersectedPtnums, Vb_final) # INSERT POSITION AT GIVEN INDICES
+            final_v = self.projectedPos - Vb_final
+            final_vel = particlesTotal[:,3:6].index_copy_(0, self.intersectedPtnums, final_v) # INSERT VELOCITY AT GIVEN INDICES
 
-        start_time = time.time()
+            return final_pos, final_vel
 
-        final_pos_f = torch.flatten(final_pos).cpu().numpy() # Flatten
-        geo.setPointFloatAttribValuesFromString("P", final_pos_f) # Houdini set
+results = ReflectVector()
+final_pos = results.compute()[0]
+final_vel = results.compute()[1]
 
-        final_vel = torch.flatten(final_vel).cpu().numpy() # Flatten
-        geo.setPointFloatAttribValuesFromString("N", final_vel) # Houdini set
+final_pos = torch.flatten(final_pos).cpu().numpy() # Flatten & copy to CPU
+geo.setPointFloatAttribValuesFromString("P", final_pos) # Houdini set
+
+final_vel = torch.flatten(final_vel).cpu().numpy() # Flatten & copy to CPU
+geo.setPointFloatAttribValuesFromString("N", final_vel) # Houdini set
 
