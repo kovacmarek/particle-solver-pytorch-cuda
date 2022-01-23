@@ -17,7 +17,7 @@ ptnums = len(geo.points())
 collisionPtnums = len(geo1.points())
 
 collisionTotal = torch.zeros(collisionPtnums,7, device='cuda') #7th value is distance
-particlesTotal = torch.zeros(ptnums,7, device='cuda') # 13th value is boolean if it's intersecting
+particlesTotal = torch.zeros(ptnums,7, device='cuda') # 7th value is boolean if it's intersecting
 
 # collision append
 init_collision_pos = geo1.pointFloatAttribValues("P") 
@@ -38,6 +38,9 @@ t_particles_norm = torch.tensor(init_particles_norm, device='cuda')
 particlesTotal[:,3:6] = t_particles_norm.reshape(ptnums,3)
 
 torch.manual_seed(0)
+
+start_time = time.time()
+
 
 # Compute distance
 dist_A = torch.cdist(collisionTotal[:,0:3], particlesTotal[:,0:3], p=2.0)
@@ -70,31 +73,21 @@ normalOfChosen = collisionTotal[:,3:6].index_select(0, mina)
 posOfChosen = collisionTotal[:,0:3].index_select(0, mina)
 dotprod = torch.sum(normalOfChosen * (particlesTotal[:,0:3] - posOfChosen), dim=-1).double() # corrected dot
 
-
 # Initialize intersect tensor, if particles is facing back-face, it's value stays, otherwise it's set to -1
 intersection = torch.zeros(1,ptnums)
 intersection = torch.where(dotprod < 0.0, mina, -1)
 
 # Append intersection as 13th value for each particle
 particlesTotal[:,-1] = intersection
-print("intersection: ")
-print(intersection)
-print("\n")
 
 mina_export = torch.flatten(mina).double().cpu().numpy()
 geo.setPointFloatAttribValues("mina", mina_export)
 intersectedPrims = intersection[intersection!=-1].int()
-print("intersectedPrims: ")
-print(intersectedPrims)
-print("\n")
 
 
 # indices of particles that intersected
 intersectedPtnums = (intersection != -1).nonzero(as_tuple=True)[0]
 
-print("intersectedPtnums: ")
-print(intersectedPtnums)
-print("\n")
 
 #########################################
 # ----- PROJECT RAY ONTO PRIMITIVE ----
@@ -109,9 +102,6 @@ third = first/second
 projectedPos = third * torch.transpose(particlesTotal[:,3:6].index_select(0, intersectedPtnums), dim0=0, dim1=1)
 projectedPos = torch.transpose(projectedPos, dim0=0, dim1=1)
 projectedPos += particlesTotal[:,0:3].index_select(0, intersectedPtnums)
-print("projectedPos: ")
-print(projectedPos)
-print("\n")
 
 #########################################
 # ----- REFLECTION OF VECTOR ----
@@ -138,11 +128,14 @@ Vb = Vb / normalScale
 # Setting variables
 Vb_final = projectedPos + Vb # Set new position
 final_pos = particlesTotal[:,0:3].index_copy_(0, intersectedPtnums, Vb_final) # INSERT POSITION AT GIVEN INDICES
-final_pos_f = torch.flatten(final_pos).cpu().numpy()
-geo.setPointFloatAttribValuesFromString("P", final_pos_f)
+final_v = projectedPos - Vb_final
+final_vel = particlesTotal[:,3:6].index_copy_(0, intersectedPtnums, final_v) # INSERT VELOCITY AT GIVEN INDICES
 
-yo = projectedPos - Vb_final
-final_vel = particlesTotal[:,3:6].index_copy_(0, intersectedPtnums, yo)
-final_vel = torch.flatten(final_vel).cpu().numpy()
-geo.setPointFloatAttribValuesFromString("N", final_vel)
+start_time = time.time()
+
+final_pos_f = torch.flatten(final_pos).cpu().numpy() # Flatten
+geo.setPointFloatAttribValuesFromString("P", final_pos_f) # Houdini set
+
+final_vel = torch.flatten(final_vel).cpu().numpy() # Flatten
+geo.setPointFloatAttribValuesFromString("N", final_vel) # Houdini set
 
