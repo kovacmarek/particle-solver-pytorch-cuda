@@ -147,7 +147,7 @@ class Simulation:
         
         return self.Total # RETURN RESULT
 
-    def InitiatialState(self):
+    def InitialState(self):
         # --- GET POINTS ---
         init_tensor = geo.pointFloatAttribValues("P")
         t_init_tensor = torch.tensor(init_tensor, device='cuda')
@@ -198,7 +198,7 @@ if simFrame == 1:
     print("new sim")
     staticSimulation = Simulation()
     hou.session.staticSimulation = staticSimulation
-    staticSimulation.InitiatialState()
+    staticSimulation.InitialState()
 else:
     final = staticSimulation.update()
     final_pos = torch.flatten(final[:,0:3]).cpu().numpy()
