@@ -41,12 +41,12 @@ torch.manual_seed(0)
 
 start_time = time.time()
 
-class FindIntersection():
+class CollisionDetection():
     def __init__(self, particles, collision) -> None:
         self.particlesTotal = particles
-        self.collisionTotal = collision 
+        self.collisionTotal = collision
 
-    def compute(self):
+    def findIntersection(self):
         # Compute distance
         dist_A = torch.cdist(self.collisionTotal[:,0:3], self.particlesTotal[:,0:3], p=2.0)
         dist_B = torch.cdist(self.collisionTotal[:,0:3], self.particlesTotal[:,3:6] + self.particlesTotal[:,0:3], p=2.0)
@@ -74,16 +74,11 @@ class FindIntersection():
         # indices of particles that intersected
         self.intersectedPtnums = (self.intersection != -1).nonzero(as_tuple=True)[0]
 
-#########################################
-# ----- PROJECT RAY ONTO PRIMITIVE ----
-#########################################
+    #########################################
+    # ----- PROJECT RAY ONTO PRIMITIVE ----
+    #########################################
 
-class ProjectOntoPrim():
-    def __init__(self, particles, collision) -> None:
-        self.particlesTotal = particles
-        self.collisionTotal = collision   
-
-    def compute(self):
+    def projectOntoPrim(self):
         init = self.particlesTotal[:,0:3].index_select(0, self.intersectedPtnums) - self.collisionTotal[:,0:3].index_select(0, self.intersectedPrims)
 
         first = torch.sum(self.collisionTotal[:,3:6].index_select(0, self.intersectedPrims) * init, dim=1)
@@ -94,16 +89,11 @@ class ProjectOntoPrim():
         self.projectedPos = torch.transpose(self.projectedPos, dim0=0, dim1=1)
         self.projectedPos += self.particlesTotal[:,0:3].index_select(0, self.intersectedPtnums)
 
-#########################################
-# ----- REFLECTION OF VECTOR ----
-#########################################
+    #########################################
+    # ----- REFLECTION OF VECTOR ----
+    #########################################
 
-class ReflectVector():
-    def __init__(self, particles, collision) -> None:
-        self.particlesTotal = particles
-        self.collisionTotal = collision  
-
-    def compute(self):
+    def reflectVector(self):
         # Compute normal from current position of the particle to projected position on the prim
         correct_ParticleNormal = particlesTotal[:,0:3].index_select(0, self.intersectedPtnums) - self.projectedPos 
 
@@ -130,7 +120,7 @@ class ReflectVector():
 
         return final_pos, final_vel
 
-results = ReflectVector()
+results = CollisionDetection()
 final_pos = results.compute()[0]
 final_vel = results.compute()[1]
 
