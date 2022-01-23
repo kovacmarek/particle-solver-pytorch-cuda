@@ -12,9 +12,6 @@ geo1 = inputs[1].geometry()
 ptnums = len(geo.points())
 collisionPtnums = len(geo1.points())
 
-collisionTotal = torch.zeros(collisionPtnums,7, device='cuda') # 7th value is distance
-particlesTotal = torch.zeros(ptnums,8, device='cuda') # 7th value is boolean if it's intersecting
-
 torch.manual_seed(0)
 simFrame = int(hou.frame()) - 1000
 
@@ -189,6 +186,40 @@ class Simulation:
         self.Constraints = []
         pass
 
+    def InitialState(self):
+        self.collisionTotal = torch.zeros(collisionPtnums,7, device='cuda') # 7th value is distance
+        self.particlesTotal = torch.zeros(ptnums,8, device='cuda') # 7th value is boolean if it's intersecting
+
+        # collision append
+        init_collision_pos = geo1.pointFloatAttribValues("P") 
+        t_collision_pos = torch.tensor(init_collision_pos, device='cuda')
+        self.collisionTotal[:,0:3] = t_collision_pos.reshape(collisionPtnums,3)
+
+        init_collision_norm = geo1.pointFloatAttribValues("N") 
+        t_collision_norm = torch.tensor(init_collision_norm, device='cuda')
+        self.collisionTotal[:,3:6] = t_collision_norm.reshape(collisionPtnums,3)
+
+        # particles append
+        init_particles_pos = geo.pointFloatAttribValues("P") 
+        t_particles_pos = torch.tensor(init_particles_pos, device='cuda')
+        self.particlesTotal[:,0:3] = t_particles_pos.reshape(ptnums,3)
+
+        init_particles_norm = geo.pointFloatAttribValues("v") 
+        t_particles_norm = torch.tensor(init_particles_norm, device='cuda')
+        self.particlesTotal[:,3:6] = t_particles_norm.reshape(ptnums,3)
+        
+        # --- SET MASS ---
+        mass = torch.ones(ptnums,1, device='cuda')
+        mass[:,0] = 10
+        self.particlesTotal[:,6] = mass[0,:] # 7th value is mass, 8th is intersection boolean
+
+        # self.Forces.append(Gravity(total))
+        self.Forces.append(Damping(self.particlesTotal))
+        self.Forces.append(Noise(self.particlesTotal))
+
+        self.Constraints.append(Ground(self.particlesTotal))
+        self.Constraints.append(CollisionDetection(self.particlesTotal, self.collisionTotal))
+
     def update(self):
         sumForce = torch.zeros(ptnums,3, device='cuda') # reset all forces
 
@@ -210,37 +241,6 @@ class Simulation:
             constraint.Apply()
         
         return self.particlesTotal # RETURN RESULT
-
-    def InitialState(self):
-        # collision append
-        init_collision_pos = geo1.pointFloatAttribValues("P") 
-        t_collision_pos = torch.tensor(init_collision_pos, device='cuda')
-        collisionTotal[:,0:3] = t_collision_pos.reshape(collisionPtnums,3)
-
-        init_collision_norm = geo1.pointFloatAttribValues("N") 
-        t_collision_norm = torch.tensor(init_collision_norm, device='cuda')
-        collisionTotal[:,3:6] = t_collision_norm.reshape(collisionPtnums,3)
-
-        # particles append
-        init_particles_pos = geo.pointFloatAttribValues("P") 
-        t_particles_pos = torch.tensor(init_particles_pos, device='cuda')
-        particlesTotal[:,0:3] = t_particles_pos.reshape(ptnums,3)
-
-        init_particles_norm = geo.pointFloatAttribValues("v") 
-        t_particles_norm = torch.tensor(init_particles_norm, device='cuda')
-        particlesTotal[:,3:6] = t_particles_norm.reshape(ptnums,3)
-        
-        # --- SET MASS ---
-        mass = torch.ones(ptnums,1, device='cuda')
-        mass[:,0] = 10
-        particlesTotal[:,6] = mass[0,:] # 7th value is mass, 8th is intersection boolean
-
-        # self.Forces.append(Gravity(total))
-        self.Forces.append(Damping(self.particlesTotal))
-        self.Forces.append(Noise(self.particlesTotal))
-
-        self.Constraints.append(Ground(self.particlesTotal))
-        self.Constraints.append(CollisionDetection(self.particlesTotal,self.CollisionGeo))
 
 
 staticSimulation = hou.session.staticSimulation
