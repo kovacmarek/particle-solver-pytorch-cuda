@@ -92,26 +92,19 @@ class CollisionDetection():
         self.intersection = torch.zeros(1,ptnums)
         self.intersection = torch.where(dotprod < 0.0, mina, -1)
 
-        # Append self.intersection as 13th value for each particle
-        print("before: ")
-        print(self.particlesTotal)
-
-        self.particlesTotal[:,-1] = self.intersection
-
-        print("after: ")
-        print(self.particlesTotal)
-
         mina_export = torch.flatten(mina).double().cpu().numpy()
         geo.setPointFloatAttribValues("mina", mina_export)
-        self.intersectedPrims = self.intersection[self.intersection!=-1].int()
+
+        # Append self.intersection as 13th value for each particle
+        self.intersectedPrims = self.intersection[self.intersection!=-1]
 
         # indices of particles that intersected
         self.intersectedPtnums = (self.intersection != -1).nonzero(as_tuple=True)[0]
-        print("self.intersectedPtnums: ")
-        print(self.intersectedPtnums)
+        # print("self.intersectedPtnums: ")
+        # print(self.intersectedPtnums)
 
-        print("self.intersectedPrims: ")
-        print(self.intersectedPrims)
+        # print("self.intersectedPrims: ")
+        # print(self.intersectedPrims)
 
     #########################################
     # ----- PROJECT RAY ONTO PRIMITIVE ----
@@ -134,10 +127,10 @@ class CollisionDetection():
 
     def reflectVector(self):
         # Compute normal from current position of the particle to projected position on the prim
-        correct_ParticleNormal = particlesTotal[:,0:3].index_select(0, self.intersectedPtnums) - self.projectedPos 
+        correct_ParticleNormal = self.particlesTotal[:,0:3].index_select(0, self.intersectedPtnums) - self.projectedPos 
 
         # Initialize / Normalize
-        normal = collisionTotal[:,3:6].index_select(0, self.intersectedPrims)
+        normal = self.collisionTotal[:,3:6].index_select(0, self.intersectedPrims)
         N_normal = f.normalize(normal, p=2, dim=0)
         N_ParticleNormal = f.normalize(correct_ParticleNormal, p=2, dim=0)
 
@@ -145,25 +138,23 @@ class CollisionDetection():
         Vb = 2*(torch.sum(normal * N_ParticleNormal , dim=-1))
         Vb = (Vb.reshape(self.intersectedPtnums.size(0),1) * normal)
         Vb -= N_ParticleNormal
-        Vb *= -1
 
         # Correcting normal vector
-        normalScale = N_ParticleNormal / correct_ParticleNormal
-        Vb = Vb / normalScale
+        normalScale = N_ParticleNormal * correct_ParticleNormal
 
         # Setting variables
-        Vb_final = self.projectedPos + Vb # Set new position
-        final_pos = particlesTotal[:,0:3].index_copy_(0, self.intersectedPtnums, Vb_final) # INSERT POSITION AT GIVEN INDICES
-        final_v = self.projectedPos - Vb_final
-        final_vel = particlesTotal[:,3:6].index_copy_(0, self.intersectedPtnums, final_v) # INSERT VELOCITY AT GIVEN INDICES
+        Vb_final = self.projectedPos + Vb  # Set new position
+        final_v = (self.projectedPos - Vb_final) *2
 
-        return final_pos, final_vel
+        self.particlesTotal[:,0:3].index_copy_(0, self.intersectedPtnums, Vb_final + final_v) # INSERT POSITION AT GIVEN INDICES
+        self.particlesTotal[:,3:6].index_copy_(0, self.intersectedPtnums, final_v) # INSERT VELOCITY AT GIVEN INDICES
+
+        self.projectedPos = torch.zeros_like(self.projectedPos) # reset zeros
         
     def Apply(self):
         self.findIntersection()
-        # self.projectOntoPrim()
-
-        # final_step = self.reflectVector()
+        self.projectOntoPrim()
+        self.reflectVector()
         # final_pos = final_step[0]
         # final_vel = final_step[1]
         
@@ -207,8 +198,8 @@ class Simulation:
         self.particlesTotal[:,6] = mass[0,:] # 7th value is mass, 8th is intersection boolean
 
         # self.Forces.append(Gravity(total))
-        self.Forces.append(Damping(self.particlesTotal))
-        self.Forces.append(Noise(self.particlesTotal))
+        # self.Forces.append(Damping(self.particlesTotal))
+        # self.Forces.append(Noise(self.particlesTotal))
 
         #self.Constraints.append(Ground(self.particlesTotal))
         self.Constraints.append(CollisionDetection(self.particlesTotal, self.collisionTotal))
@@ -253,3 +244,4 @@ else:
 end_time = time.time()    
 
 print("Compute time for " + str(ptnums) + " particles: " + str(end_time - start_time))
+print("-----------------")
