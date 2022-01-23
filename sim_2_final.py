@@ -141,6 +141,7 @@ class Simulation:
         self.Total[:,3:6] += acc * TIME 
         self.Total[:,0:3] += self.Total[:,3:6] * TIME 
         
+        
         # Apply constraints
         for constraint in self.Constraints:
             constraint.Apply()
