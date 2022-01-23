@@ -41,101 +41,95 @@ torch.manual_seed(0)
 
 start_time = time.time()
 
+class FindIntersection():
+    def __init__(self, particles, collision) -> None:
+        self.particlesTotal = particles
+        self.collisionTotal = collision   
 
-# Compute distance
-dist_A = torch.cdist(collisionTotal[:,0:3], particlesTotal[:,0:3], p=2.0)
-dist_B = torch.cdist(collisionTotal[:,0:3], particlesTotal[:,3:6] + particlesTotal[:,0:3], p=2.0)
-dist_both = torch.add(dist_A, dist_B)
+        # Compute distance
+        dist_A = torch.cdist(self.collisionTotal[:,0:3], self.particlesTotal[:,0:3], p=2.0)
+        dist_B = torch.cdist(self.collisionTotal[:,0:3], self.particlesTotal[:,3:6] + self.particlesTotal[:,0:3], p=2.0)
+        dist_both = torch.add(dist_A, dist_B)
 
-# Closest point on the line
-#print("dpc: ")
-#lineDir = f.normalize(particlesTotal[:,3:6], p=2, dim=0)
-#v = collisionTotal[:,0:3].unsqueeze(1) - particlesTotal[:,0:3].unsqueeze(0)
-#print("v: ")
-#print(v)
-#d = torch.sum(v * lineDir,dim=2)
-#print("d: ")
-#print(d)
-#d = torch.min(d, dim=0)
-#print(d.values)
+        # Find minarg for each collumn (particle)
+        mina = torch.argmin(dist_both, dim=0)
 
-#fin = torch.transpose(lineDir,dim0=0,dim1=1) * d.values
-#fin = torch.transpose(lineDir,dim0=1,dim1=1)
-#print("fin: ")
-#print(fin)
+        # Check if DOT is negative with primitive it intersects == inside the geometry
+        normalOfChosen = self.collisionTotal[:,3:6].index_select(0, mina)
+        posOfChosen = self.collisionTotal[:,0:3].index_select(0, mina)
+        dotprod = torch.sum(normalOfChosen * (self.particlesTotal[:,0:3] - posOfChosen), dim=-1).double() # corrected dot
 
+        # Initialize intersect tensor, if particles is facing back-face, it's value stays, otherwise it's set to -1
+        self.intersection = torch.zeros(1,ptnums)
+        self.intersection = torch.where(dotprod < 0.0, mina, -1)
 
-# Find minarg for each collumn (particle)
-mina = torch.argmin(dist_both, dim=0)
+        # Append self.intersection as 13th value for each particle
+        self.particlesTotal[:,-1] = self.intersection
 
-# Check if DOT is negative with primitive it intersects == inside the geometry
-normalOfChosen = collisionTotal[:,3:6].index_select(0, mina)
-posOfChosen = collisionTotal[:,0:3].index_select(0, mina)
-dotprod = torch.sum(normalOfChosen * (particlesTotal[:,0:3] - posOfChosen), dim=-1).double() # corrected dot
+        mina_export = torch.flatten(mina).double().cpu().numpy()
+        geo.setPointFloatAttribValues("mina", mina_export)
+        self.intersectedPrims = self.intersection[self.intersection!=-1].int()
 
-# Initialize intersect tensor, if particles is facing back-face, it's value stays, otherwise it's set to -1
-intersection = torch.zeros(1,ptnums)
-intersection = torch.where(dotprod < 0.0, mina, -1)
-
-# Append intersection as 13th value for each particle
-particlesTotal[:,-1] = intersection
-
-mina_export = torch.flatten(mina).double().cpu().numpy()
-geo.setPointFloatAttribValues("mina", mina_export)
-intersectedPrims = intersection[intersection!=-1].int()
-
-
-# indices of particles that intersected
-intersectedPtnums = (intersection != -1).nonzero(as_tuple=True)[0]
-
+        # indices of particles that intersected
+        self.intersectedPtnums = (self.intersection != -1).nonzero(as_tuple=True)[0]
 
 #########################################
 # ----- PROJECT RAY ONTO PRIMITIVE ----
 #########################################
 
-init = particlesTotal[:,0:3].index_select(0, intersectedPtnums) - collisionTotal[:,0:3].index_select(0, intersectedPrims)
+class ProjectOntoPrim():
+    def __init__(self, particles, collision) -> None:
+        self.particlesTotal = particles
+        self.collisionTotal = collision   
 
-first = torch.sum(collisionTotal[:,3:6].index_select(0, intersectedPrims) * init, dim=1)
-second = torch.sum(collisionTotal[:,3:6].index_select(0, intersectedPrims) * -particlesTotal[:,3:6].index_select(0, intersectedPtnums), dim=1)
-third = first/second
+        init = self.particlesTotal[:,0:3].index_select(0, self.intersectedPtnums) - self.collisionTotal[:,0:3].index_select(0, self.intersectedPrims)
 
-projectedPos = third * torch.transpose(particlesTotal[:,3:6].index_select(0, intersectedPtnums), dim0=0, dim1=1)
-projectedPos = torch.transpose(projectedPos, dim0=0, dim1=1)
-projectedPos += particlesTotal[:,0:3].index_select(0, intersectedPtnums)
+        first = torch.sum(self.collisionTotal[:,3:6].index_select(0, self.intersectedPrims) * init, dim=1)
+        second = torch.sum(self.collisionTotal[:,3:6].index_select(0, self.intersectedPrims) * -self.particlesTotal[:,3:6].index_select(0, self.intersectedPtnums), dim=1)
+        third = first/second
+
+        self.projectedPos = third * torch.transpose(self.particlesTotal[:,3:6].index_select(0, self.intersectedPtnums), dim0=0, dim1=1)
+        self.projectedPos = torch.transpose(self.projectedPos, dim0=0, dim1=1)
+        self.projectedPos += self.particlesTotal[:,0:3].index_select(0, self.intersectedPtnums)
 
 #########################################
 # ----- REFLECTION OF VECTOR ----
 #########################################
 
-# Compute normal from current position of the particle to projected position on the prim
-correct_ParticleNormal = particlesTotal[:,0:3].index_select(0, intersectedPtnums) - projectedPos 
+class ReflectVector():
+    def __init__(self, particles, collision) -> None:
+        self.particlesTotal = particles
+        self.collisionTotal = collision  
 
-# Initialize / Normalize
-normal = collisionTotal[:,3:6].index_select(0, intersectedPrims)
-N_normal = f.normalize(normal, p=2, dim=0)
-N_ParticleNormal = f.normalize(correct_ParticleNormal, p=2, dim=0)
+        # Compute normal from current position of the particle to projected position on the prim
+        correct_ParticleNormal = particlesTotal[:,0:3].index_select(0, self.intersectedPtnums) - self.projectedPos 
 
-# Reflection vector
-Vb = 2*(torch.sum(normal * N_ParticleNormal , dim=-1))
-Vb = (Vb.reshape(intersectedPtnums.size(0),1) * normal) # TODO NUMBER 6 TO BE NUMBER OF ITEMS IN THE ARRAY: intersectedPtnums
-Vb -= N_ParticleNormal
-Vb *= -1
+        # Initialize / Normalize
+        normal = collisionTotal[:,3:6].index_select(0, self.intersectedPrims)
+        N_normal = f.normalize(normal, p=2, dim=0)
+        N_ParticleNormal = f.normalize(correct_ParticleNormal, p=2, dim=0)
 
-# Correcting normal vector
-normalScale = N_ParticleNormal / correct_ParticleNormal
-Vb = Vb / normalScale
+        # Reflection vector
+        Vb = 2*(torch.sum(normal * N_ParticleNormal , dim=-1))
+        Vb = (Vb.reshape(self.intersectedPtnums.size(0),1) * normal) # TODO NUMBER 6 TO BE NUMBER OF ITEMS IN THE ARRAY: self.intersectedPtnums
+        Vb -= N_ParticleNormal
+        Vb *= -1
 
-# Setting variables
-Vb_final = projectedPos + Vb # Set new position
-final_pos = particlesTotal[:,0:3].index_copy_(0, intersectedPtnums, Vb_final) # INSERT POSITION AT GIVEN INDICES
-final_v = projectedPos - Vb_final
-final_vel = particlesTotal[:,3:6].index_copy_(0, intersectedPtnums, final_v) # INSERT VELOCITY AT GIVEN INDICES
+        # Correcting normal vector
+        normalScale = N_ParticleNormal / correct_ParticleNormal
+        Vb = Vb / normalScale
 
-start_time = time.time()
+        # Setting variables
+        Vb_final = self.projectedPos + Vb # Set new position
+        final_pos = particlesTotal[:,0:3].index_copy_(0, self.intersectedPtnums, Vb_final) # INSERT POSITION AT GIVEN INDICES
+        final_v = self.projectedPos - Vb_final
+        final_vel = particlesTotal[:,3:6].index_copy_(0, self.intersectedPtnums, final_v) # INSERT VELOCITY AT GIVEN INDICES
 
-final_pos_f = torch.flatten(final_pos).cpu().numpy() # Flatten
-geo.setPointFloatAttribValuesFromString("P", final_pos_f) # Houdini set
+        start_time = time.time()
 
-final_vel = torch.flatten(final_vel).cpu().numpy() # Flatten
-geo.setPointFloatAttribValuesFromString("N", final_vel) # Houdini set
+        final_pos_f = torch.flatten(final_pos).cpu().numpy() # Flatten
+        geo.setPointFloatAttribValuesFromString("P", final_pos_f) # Houdini set
+
+        final_vel = torch.flatten(final_vel).cpu().numpy() # Flatten
+        geo.setPointFloatAttribValuesFromString("N", final_vel) # Houdini set
 
