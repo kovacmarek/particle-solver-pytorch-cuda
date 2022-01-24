@@ -50,11 +50,11 @@ class Noise:
     def __init__(self, total) -> None:
         self.particlesTotal = total
         self.Acc = torch.zeros(ptnums,3, device='cuda')
-        self.Acc[:,0] = torch.add(self.Acc[:,0], torch.randn(ptnums, device='cuda')) # X
+        self.Acc[:,0] = torch.add(self.Acc[:,0], torch.randn(ptnums, device='cuda')*5) # X
         torch.manual_seed(1)
-        self.Acc[:,1] = torch.add(self.Acc[:,0], torch.randn(ptnums, device='cuda')) # Y
+        self.Acc[:,1] = torch.add(self.Acc[:,0], torch.randn(ptnums, device='cuda')*5) # Y
         torch.manual_seed(2)
-        self.Acc[:,2] = torch.add(self.Acc[:,0], torch.randn(ptnums, device='cuda')) # Z
+        self.Acc[:,2] = torch.add(self.Acc[:,0], torch.randn(ptnums, device='cuda')*5) # Z
 
     def Apply(self):
         mass = self.particlesTotal[:,-1]
@@ -162,12 +162,12 @@ class CollisionDetection():
         normalScale = N_ParticleNormal / correct_ParticleNormal
 
         # Setting variables
-        loss = 2
-        Vb_final = (self.particlesTotal[:,3:6].index_select(0, self.intersectedPtnums) * (1.0 / loss)) + (self.projectedPos + 0.001)  # Set new position
+        loss = 0.5
+        Vb_final = self.particlesTotal[:,3:6].index_select(0, self.intersectedPtnums) + (self.projectedPos + 0.001)  # Set new position
         final_v = (self.projectedPos - Vb_final)
 
         self.particlesTotal[:,0:3].index_copy_(0, self.intersectedPtnums, Vb_final + final_v) # INSERT POSITION AT GIVEN INDICES
-        self.particlesTotal[:,3:6].index_copy_(0, self.intersectedPtnums, Vb) # INSERT VELOCITY AT GIVEN INDICES
+        self.particlesTotal[:,3:6].index_copy_(0, self.intersectedPtnums, Vb + final_v * loss) # INSERT VELOCITY AT GIVEN INDICES
 
         self.projectedPos = torch.zeros_like(self.projectedPos) # reset zeros
         
@@ -227,7 +227,7 @@ class Simulation:
         # Accumulate Forces
         for force in self.Forces:
             a = force.Apply()
-            sumForce += torch.add(sumForce, a) * 0.1
+            sumForce += torch.add(sumForce, a) *0.1
         
         # Symplectic Euler Integration
         acc = torch.zeros(ptnums,3, device='cuda')        
