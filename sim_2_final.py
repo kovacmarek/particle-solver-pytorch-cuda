@@ -74,14 +74,27 @@ class CollisionDetection():
         self.particlesTotal = particles
         self.collisionTotal = collision
 
+    def selfCollision(self):
+        particleDistance = f.pdist(self.particlesTotal[:,0:3], p=2.0)
+        print(particleDistance)
+
+        minaParticle = torch.argmin(particleDistance, dim=0)
+        print(minaParticle)
+        print(torch.subtract(self.particlesTotal[:,0:3].unsqueeze(0), self.particlesTotal[:,0:3].unsqueeze(1)))
+
+        # self.particlesTotal[:,0:3] += firstCompute_N.index_select(0, closeParticlesIndicies[:,0])
+
     def findIntersection(self):
         # Compute distance
         dist_A = torch.cdist(self.collisionTotal[:,0:3], self.particlesTotal[:,0:3], p=2.0)
-        dist_B = torch.cdist(self.collisionTotal[:,0:3], self.particlesTotal[:,3:6] + self.particlesTotal[:,0:3], p=2.0)
-        dist_both = torch.add(dist_A, dist_B)
+        # dist_B = torch.cdist(self.collisionTotal[:,0:3], self.particlesTotal[:,3:6] + self.particlesTotal[:,0:3], p=2.0)
+        # dist_both = torch.add(dist_A, dist_B)
 
         # Find minarg for each collumn (particle)
-        mina = torch.argmin(dist_both, dim=0)
+        mina = torch.argmin(dist_A, dim=0)
+
+        # Clean unoccupied GPU memory cache
+        torch.cuda.empty_cache()
 
         # Check if DOT is negative with primitive it intersects == inside the geometry
         normalOfChosen = self.collisionTotal[:,3:6].index_select(0, mina)
@@ -127,7 +140,8 @@ class CollisionDetection():
 
     def reflectVector(self):
         # Compute normal from current position of the particle to projected position on the prim
-        correct_ParticleNormal = self.particlesTotal[:,0:3].index_select(0, self.intersectedPtnums) - self.projectedPos 
+        correct_ParticleNormal = self.projectedPos - self.particlesTotal[:,0:3].index_select(0, self.intersectedPtnums)
+              
 
         # Initialize / Normalize
         normal = self.collisionTotal[:,3:6].index_select(0, self.intersectedPrims)
@@ -135,19 +149,25 @@ class CollisionDetection():
         N_ParticleNormal = f.normalize(correct_ParticleNormal, p=2, dim=0)
 
         # Reflection vector
-        Vb = 2*(torch.sum(normal * N_ParticleNormal , dim=-1))
+        Vb = 2*(torch.sum(normal *correct_ParticleNormal , dim=-1))
         Vb = (Vb.reshape(self.intersectedPtnums.size(0),1) * normal)
         Vb -= N_ParticleNormal
 
+        # ##### Export to Houdini  --------- TEMPORARY
+        # correct_dir = torch.rand_like(self.particlesTotal[:,0:3]).index_copy_(0, self.intersectedPtnums, Vb)
+        # correct_dir = torch.flatten(correct_dir).cpu().numpy()
+        # geo.setPointFloatAttribValuesFromString("N", correct_dir)
+        
         # Correcting normal vector
-        normalScale = N_ParticleNormal * correct_ParticleNormal
+        normalScale = N_ParticleNormal / correct_ParticleNormal
 
         # Setting variables
-        Vb_final = self.projectedPos + Vb  # Set new position
-        final_v = (self.projectedPos - Vb_final) *2
+        loss = 2
+        Vb_final = (self.particlesTotal[:,3:6].index_select(0, self.intersectedPtnums) * (1.0 / loss)) + (self.projectedPos + 0.001)  # Set new position
+        final_v = (self.projectedPos - Vb_final)
 
         self.particlesTotal[:,0:3].index_copy_(0, self.intersectedPtnums, Vb_final + final_v) # INSERT POSITION AT GIVEN INDICES
-        self.particlesTotal[:,3:6].index_copy_(0, self.intersectedPtnums, final_v) # INSERT VELOCITY AT GIVEN INDICES
+        self.particlesTotal[:,3:6].index_copy_(0, self.intersectedPtnums, Vb) # INSERT VELOCITY AT GIVEN INDICES
 
         self.projectedPos = torch.zeros_like(self.projectedPos) # reset zeros
         
@@ -155,14 +175,8 @@ class CollisionDetection():
         self.findIntersection()
         self.projectOntoPrim()
         self.reflectVector()
-        # final_pos = final_step[0]
-        # final_vel = final_step[1]
-        
-        # # Apply Pos
-        # self.particlesTotal[:,0:3] += final_pos
+        # self.selfCollision()
 
-        # # Apply Vel
-        # self.particlesTotal[:,3:6] += final_vel
 
 class Simulation:
     def __init__(self) -> None:
@@ -193,11 +207,10 @@ class Simulation:
         self.particlesTotal[:,3:6] = t_particles_norm.reshape(ptnums,3)
         
         # --- SET MASS ---
-        mass = torch.ones(ptnums,1, device='cuda')
-        mass[:,0] = 10
+        mass = torch.rand(ptnums,1, device='cuda') * 10
         self.particlesTotal[:,6] = mass[0,:] # 7th value is mass, 8th is intersection boolean
 
-        # self.Forces.append(Gravity(total))
+        self.Forces.append(Gravity(self.particlesTotal))
         # self.Forces.append(Damping(self.particlesTotal))
         # self.Forces.append(Noise(self.particlesTotal))
 
@@ -205,12 +218,16 @@ class Simulation:
         self.Constraints.append(CollisionDetection(self.particlesTotal, self.collisionTotal))
 
     def update(self):
+
+        # Clean unoccupied GPU memory cache
+        torch.cuda.empty_cache()
+
         sumForce = torch.zeros(ptnums,3, device='cuda') # reset all forces
 
         # Accumulate Forces
         for force in self.Forces:
             a = force.Apply()
-            sumForce += torch.add(sumForce, a)
+            sumForce += torch.add(sumForce, a) * 0.1
         
         # Symplectic Euler Integration
         acc = torch.zeros(ptnums,3, device='cuda')        
@@ -241,7 +258,9 @@ else:
     geo.setPointFloatAttribValuesFromString("P", final_pos)
     geo.setPointFloatAttribValuesFromString("v", final_vel)
     
-end_time = time.time()    
+end_time = time.time()  
+# print("memory: ")
+# print(torch.cuda.memory_summary(device='cuda', abbreviated=True))  
 
 print("Compute time for " + str(ptnums) + " particles: " + str(end_time - start_time))
 print("-----------------")
