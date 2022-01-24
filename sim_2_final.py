@@ -159,15 +159,16 @@ class CollisionDetection():
         # geo.setPointFloatAttribValuesFromString("N", correct_dir)
         
         # Correcting normal vector
-        normalScale = N_ParticleNormal / correct_ParticleNormal
+        friction = 10
+        final_friction = N_normal * (1.0 / (friction + 0.5))
 
         # Setting variables
-        loss = 0.5
-        Vb_final = self.particlesTotal[:,3:6].index_select(0, self.intersectedPtnums) + (self.projectedPos + 0.001)  # Set new position
+        bounce = 0.05
+        Vb_final = self.particlesTotal[:,3:6].index_select(0, self.intersectedPtnums) + (self.projectedPos - 0.001)  # Set new position
         final_v = (self.projectedPos - Vb_final)
 
-        self.particlesTotal[:,0:3].index_copy_(0, self.intersectedPtnums, Vb_final + final_v) # INSERT POSITION AT GIVEN INDICES
-        self.particlesTotal[:,3:6].index_copy_(0, self.intersectedPtnums, Vb + final_v * loss) # INSERT VELOCITY AT GIVEN INDICES
+        self.particlesTotal[:,0:3].index_copy_(0, self.intersectedPtnums, Vb_final + final_v + final_friction) # INSERT POSITION AT GIVEN INDICES
+        self.particlesTotal[:,3:6].index_copy_(0, self.intersectedPtnums, Vb + final_v * bounce + final_friction) # INSERT VELOCITY AT GIVEN INDICES
 
         self.projectedPos = torch.zeros_like(self.projectedPos) # reset zeros
         
