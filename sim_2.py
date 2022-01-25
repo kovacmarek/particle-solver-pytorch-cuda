@@ -4,9 +4,23 @@ import time
 
 torch.manual_seed(0)
 
-t = torch.Tensor([[1, 2, 3], [4,5,2]])
-print((t < 2.0).nonzero(as_tuple=True))
+a = torch.rand(50000000,3).chunk(4)
+chunks = len(a)
 
+start_time = time.time()
+for i in range(0, len(a)):
+        a[i][:,1] = 12.0 + i
+        
 
-a = torch.rand(1000000,1000)
+mid_time = time.time()
+print(len(a))  
+a = torch.cat(a,0)
+end_time = time.time()
+
+print("--------")
+print("Compute time for " + str(50000000) + " particles with " + str(chunks) + " chunks: "  + str(mid_time - start_time))
+print("Concat time for " + str(50000000) + " particles with " + str(chunks) + " chunks: "  + str(end_time - mid_time))
+print("Total time: " + str(end_time - start_time))
+print("--------")
+print("concat:" + str((a.element_size() * a.nelement()) / 1000000) + " MB")
 print(a)
