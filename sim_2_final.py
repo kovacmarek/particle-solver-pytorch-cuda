@@ -1,3 +1,4 @@
+from re import X
 import torch
 import numpy as np
 import time
@@ -74,15 +75,114 @@ class CollisionDetection():
         self.particlesTotal = particles
         self.collisionTotal = collision
 
+    def boundingBox(self):
+        BB_y_max = torch.max(self.particlesTotal[:,1])
+        BB_y_min = torch.min(self.particlesTotal[:,1])
+        BB_x_max = torch.max(self.particlesTotal[:,0])
+        BB_x_min = torch.min(self.particlesTotal[:,0])
+        BB_z_max = torch.max(self.particlesTotal[:,2])
+        BB_z_min = torch.min(self.particlesTotal[:,2])
+
+        BB_A = torch.tensor([BB_x_max, BB_y_min, BB_z_min])
+        BB_B = torch.tensor([BB_x_min, BB_y_min, BB_z_min])
+        BB_C = torch.tensor([BB_x_max, BB_y_min, BB_z_max])
+        BB_D = torch.tensor([BB_x_min, BB_y_min, BB_z_max])
+        BB_E = torch.tensor([BB_x_max, BB_y_max, BB_z_min])
+        BB_F = torch.tensor([BB_x_min, BB_y_max, BB_z_min])
+        BB_G = torch.tensor([BB_x_max, BB_y_max, BB_z_max])
+        BB_H = torch.tensor([BB_x_min, BB_y_max, BB_z_max])
+
+        BB_centroid = (BB_A + BB_B + BB_C + BB_D + BB_E + BB_F + BB_G + BB_H) / 8
+
+        BB_resolution = 2
+        chunks = BB_resolution**3
+        BB_chunks = []
+
+        max_corner = torch.tensor([BB_x_max, BB_y_max, BB_z_max])
+        min_corner = torch.tensor([BB_x_min, BB_y_min, BB_z_min])
+        # print(max_corner)
+        # print(min_corner)
+
+        scene_center = torch.tensor([0,0,0])
+        max_corner = max_corner - (scene_center - max_corner) # move corner to normalized position
+        min_corner = min_corner - (scene_center - min_corner) # move corner to normalized position
+
+        x_unit = (abs(max_corner[0].item()) + abs(min_corner[0].item())) / chunks
+        y_unit = (abs(max_corner[1].item()) + abs(min_corner[1].item())) / chunks
+        z_unit = (abs(max_corner[2].item()) + abs(min_corner[2].item())) / chunks
+        
+        print(x_unit)
+        print(y_unit)
+        print(z_unit)
+
+
+        BB_chunk = []
+
+        # min x,y,z
+        BB_chunk.append(BB_x_min)
+        BB_chunk.append(BB_y_min)
+        BB_chunk.append(BB_z_min)
+        
+        # max x,y,z
+        BB_chunk.append(BB_x_min + (x_unit*2))
+        BB_chunk.append(BB_y_min + (y_unit*2))
+        BB_chunk.append(BB_z_min + (z_unit*2))
+        
+        BB_chunks.append(BB_chunk)
+        BB_chunks = torch.tensor(BB_chunks)
+
+        BB_chunks_total = torch.zeros(chunks,6)
+        print(BB_chunks)
+        print(BB_chunks_total)
+
+        for x in range(0, BB_resolution):
+            for y in range(0, BB_resolution):
+                for z in range(0, BB_resolution):
+                    BB_chunks_total[x,0] = BB_chunks[0,0] + (x * x_unit)
+                    BB_chunks_total[x,3] = BB_chunks[0,3] + (x * x_unit)
+
+                    BB_chunks_total[y,1] = BB_chunks[0,1] + (y * y_unit)
+                    BB_chunks_total[y,4] = BB_chunks[0,4] + (y * y_unit)
+                    
+                    BB_chunks_total[z,2] = BB_chunks[0,2] + (z * z_unit)
+                    BB_chunks_total[z,5] = BB_chunks[0,5] + (z * z_unit)
+        print(BB_chunks_total)
+
+
+
+        # # min x,y,z
+        # BB_chunk.append(BB_x_min + (x_unit * i))
+        # BB_chunk.append(BB_y_min + (y_unit * i))
+        # BB_chunk.append(BB_z_min + (z_unit * i))
+        
+        # # max x,y,z
+        # BB_chunk.append(BB_x_min + (x_unit * i) + (x_unit))
+        # BB_chunk.append(BB_y_min + (y_unit * i) + (y_unit))
+        # BB_chunk.append(BB_z_min + (z_unit * i) + (z_unit))
+
+
+        BB_chunks_total = torch.cat((BB_chunks_total[:,0:3], BB_chunks_total[:,3:6]))
+        # print(BB_chunks_total)
+        
+        BB_points = torch.flatten(BB_chunks_total).cpu().numpy()
+        geo.setPointFloatAttribValuesFromString("BB", BB_points)
+
+
     def selfCollision(self):
-        particleDistance = f.pdist(self.particlesTotal[:,0:3], p=2.0)
-        print(particleDistance)
+        start2 = time.time()
 
-        minaParticle = torch.argmin(particleDistance, dim=0)
-        print(minaParticle)
-        print(torch.subtract(self.particlesTotal[:,0:3].unsqueeze(0), self.particlesTotal[:,0:3].unsqueeze(1)))
+        chunks = 4
+        self.particlesTotal = self.particlesTotal.chunk(chunks)
+        for i in range(0, len(self.particlesTotal)):
+                self.particlesTotal[i][:,1] = 12.0 + i
 
-        # self.particlesTotal[:,0:3] += firstCompute_N.index_select(0, closeParticlesIndicies[:,0])
+        end2 = time.time()
+
+        real_chunks = len(self.particlesTotal)
+        print("Forloop time for " + str(ptnums) + " particles and " + str(real_chunks) + " chunks: " + str(end2 - start2))
+
+        self.particlesTotal = torch.cat(self.particlesTotal,0).cuda() 
+        print("VRAM:" + str((self.particlesTotal.element_size() * self.particlesTotal.nelement()) / 1000000) + " MB")       
 
     def findIntersection(self):
         # Compute distance
@@ -95,7 +195,7 @@ class CollisionDetection():
 
         # Clean unoccupied GPU memory cache
         torch.cuda.empty_cache()
-
+        
         # Check if DOT is negative with primitive it intersects == inside the geometry
         normalOfChosen = self.collisionTotal[:,3:6].index_select(0, mina)
         posOfChosen = self.collisionTotal[:,0:3].index_select(0, mina)
@@ -173,10 +273,12 @@ class CollisionDetection():
         self.projectedPos = torch.zeros_like(self.projectedPos) # reset zeros
         
     def Apply(self):
-        self.findIntersection()
-        self.projectOntoPrim()
-        self.reflectVector()
+        # self.findIntersection()
+        # self.projectOntoPrim()
+        # self.reflectVector()
+        # self.boundingBox()
         # self.selfCollision()
+        self.boundingBox()
 
 
 class Simulation:
