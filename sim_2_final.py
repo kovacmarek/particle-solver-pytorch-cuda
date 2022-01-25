@@ -158,7 +158,7 @@ class CollisionDetection():
         # correct_dir = torch.flatten(correct_dir).cpu().numpy()
         # geo.setPointFloatAttribValuesFromString("N", correct_dir)
         
-        # Correcting normal vector
+        # Friction
         friction = 10
         final_friction = N_normal * (1.0 / (friction + 0.5))
 
