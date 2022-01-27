@@ -1,4 +1,3 @@
-from re import X
 import torch
 import numpy as np
 import time
@@ -75,7 +74,7 @@ class CollisionDetection():
         self.particlesTotal = particles
         self.collisionTotal = collision
 
-    def boundingBox(self):
+    def createBoundingBoxes(self):
         BB_y_max = torch.max(self.particlesTotal[:,1])
         BB_y_min = torch.min(self.particlesTotal[:,1])
         BB_x_max = torch.max(self.particlesTotal[:,0])
@@ -93,79 +92,69 @@ class CollisionDetection():
         BB_H = torch.tensor([BB_x_min, BB_y_max, BB_z_max])
 
         BB_centroid = (BB_A + BB_B + BB_C + BB_D + BB_E + BB_F + BB_G + BB_H) / 8
+        
 
-        BB_resolution = 2
+    #########################################
+    # ----- INDEXING BOUNDING BOXES ----
+    #########################################    
+        
+        BB_resolution = int(hou.parm('./bb_resolution').rawValue())
         chunks = BB_resolution**3
-        BB_chunks = []
+        xyz = torch.zeros(chunks,3)
 
+        # 0,1,2,3 0,1,2,3 0,1,2,3 0,1,2,3
+        iter = 0
+        while iter < (chunks):     
+                index = iter % BB_resolution 
+                xyz[iter,0] = index
+                iter += 1
+
+        # # 0,0,0,0 1,1,1,1 2,2,2,2 3,3,3,3
+        iter = 0
+        while iter <= chunks:
+                counter = iter * BB_resolution # 0,4,8,16
+                xyz[counter:counter + BB_resolution,1] = iter % BB_resolution
+                iter += 1 
+
+        # # 0,0,0,0 0,0,0,0 0,0,0,0 0,0,0,0     1,1,1,1 1,1,1,1 1,1,1,1 1,1,1,1     2,2,2,2 2,2,2,2 2,2,2,2 2,2,2,2    3,3,3,3 3,3,3,3 3,3,3,3 3,3,3,3
+        iter = 0
+        while iter <= chunks:
+                counter = iter * (BB_resolution**2) # 0,4,8,16
+                xyz[counter:counter + BB_resolution**2,2] = iter % BB_resolution
+                iter += 1      
+
+    #########################################
+    # ----- ASIGNING BOUNDING BOXES ----
+    ######################################### 
+      
         max_corner = torch.tensor([BB_x_max, BB_y_max, BB_z_max])
         min_corner = torch.tensor([BB_x_min, BB_y_min, BB_z_min])
-        # print(max_corner)
-        # print(min_corner)
-
         scene_center = torch.tensor([0,0,0])
-        max_corner = max_corner - (scene_center - max_corner) # move corner to normalized position
-        min_corner = min_corner - (scene_center - min_corner) # move corner to normalized position
 
-        x_unit = (abs(max_corner[0].item()) + abs(min_corner[0].item())) / chunks
-        y_unit = (abs(max_corner[1].item()) + abs(min_corner[1].item())) / chunks
-        z_unit = (abs(max_corner[2].item()) + abs(min_corner[2].item())) / chunks
-        
-        print(x_unit)
-        print(y_unit)
-        print(z_unit)
+        # GET UNIT LENGTH FOR EACH AXIS
+        x_unit = (abs(max_corner[0].item() - min_corner[0].item())) / chunks
+        y_unit = (abs(max_corner[1].item() - min_corner[1].item())) / chunks
+        z_unit = (abs(max_corner[2].item() - min_corner[2].item())) / chunks
 
+        # MULTIPLY EACH UNIT AXIS WITH THEIR CORRESPONDING INDEX
+        # PLACE BOUNDING BOXES TO THEIR CORRECT WORLD POSITION
+        unit_xyz = torch.tensor([x_unit, y_unit, z_unit]) * BB_resolution
+        unit_xyz *= BB_resolution
 
-        BB_chunk = []
+        xyz_finalmin = (xyz * unit_xyz) - (scene_center - min_corner)
+        xyz_finalmax = ((xyz+1) * unit_xyz) - (scene_center - min_corner)
 
-        # min x,y,z
-        BB_chunk.append(BB_x_min)
-        BB_chunk.append(BB_y_min)
-        BB_chunk.append(BB_z_min)
-        
-        # max x,y,z
-        BB_chunk.append(BB_x_min + (x_unit*2))
-        BB_chunk.append(BB_y_min + (y_unit*2))
-        BB_chunk.append(BB_z_min + (z_unit*2))
-        
-        BB_chunks.append(BB_chunk)
-        BB_chunks = torch.tensor(BB_chunks)
+        print("min_corner: ")
+        print(min_corner)
 
-        BB_chunks_total = torch.zeros(chunks,6)
-        print(BB_chunks)
-        print(BB_chunks_total)
+        # EXPORT MIN VALUES BB_MIN
+        BB_points = torch.flatten(xyz_finalmin).cpu().numpy()
+        geo.setPointFloatAttribValuesFromString("BB_min", BB_points)  
 
-        for x in range(0, BB_resolution):
-            for y in range(0, BB_resolution):
-                for z in range(0, BB_resolution):
-                    BB_chunks_total[x,0] = BB_chunks[0,0] + (x * x_unit)
-                    BB_chunks_total[x,3] = BB_chunks[0,3] + (x * x_unit)
+        # EXPORT MAX VALUES BB_MAX
+        BB_points = torch.flatten(xyz_finalmax).cpu().numpy()
+        geo.setPointFloatAttribValuesFromString("BB_max", BB_points)  
 
-                    BB_chunks_total[y,1] = BB_chunks[0,1] + (y * y_unit)
-                    BB_chunks_total[y,4] = BB_chunks[0,4] + (y * y_unit)
-                    
-                    BB_chunks_total[z,2] = BB_chunks[0,2] + (z * z_unit)
-                    BB_chunks_total[z,5] = BB_chunks[0,5] + (z * z_unit)
-        print(BB_chunks_total)
-
-
-
-        # # min x,y,z
-        # BB_chunk.append(BB_x_min + (x_unit * i))
-        # BB_chunk.append(BB_y_min + (y_unit * i))
-        # BB_chunk.append(BB_z_min + (z_unit * i))
-        
-        # # max x,y,z
-        # BB_chunk.append(BB_x_min + (x_unit * i) + (x_unit))
-        # BB_chunk.append(BB_y_min + (y_unit * i) + (y_unit))
-        # BB_chunk.append(BB_z_min + (z_unit * i) + (z_unit))
-
-
-        BB_chunks_total = torch.cat((BB_chunks_total[:,0:3], BB_chunks_total[:,3:6]))
-        # print(BB_chunks_total)
-        
-        BB_points = torch.flatten(BB_chunks_total).cpu().numpy()
-        geo.setPointFloatAttribValuesFromString("BB", BB_points)
 
 
     def selfCollision(self):
@@ -276,9 +265,9 @@ class CollisionDetection():
         # self.findIntersection()
         # self.projectOntoPrim()
         # self.reflectVector()
-        # self.boundingBox()
+        # self.createBoundingBoxes()
         # self.selfCollision()
-        self.boundingBox()
+        self.createBoundingBoxes()
 
 
 class Simulation:
