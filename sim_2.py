@@ -1,26 +1,36 @@
 import torch
 import numpy as np
 import time
+import matplotlib.pyplot as plt
+import torch.nn.functional as f
 
 torch.manual_seed(0)
 
-a = torch.rand(50000000,3).chunk(4)
-chunks = len(a)
+BB_resolution = 2
+chunks = BB_resolution**3
+BB_chunks = []
+xyz = torch.zeros(chunks,3)
 
-start_time = time.time()
-for i in range(0, len(a)):
-        a[i][:,1] = 12.0 + i
-        
+# 0,1,2,3 0,1,2,3 0,1,2,3 0,1,2,3
+iter = 0
+while iter < (chunks):     
+        index = iter % BB_resolution 
+        xyz[iter,0] = index
+        iter += 1
 
-mid_time = time.time()
-print(len(a))  
-a = torch.cat(a,0)
-end_time = time.time()
+# # 0,0,0,0 1,1,1,1 2,2,2,2 3,3,3,3
+iter = 0
+while iter <= chunks:
+        counter = iter * BB_resolution # 0,4,8,16
+        xyz[counter:counter + BB_resolution,1] = iter % BB_resolution
+        iter += 1 
 
-print("--------")
-print("Compute time for " + str(50000000) + " particles with " + str(chunks) + " chunks: "  + str(mid_time - start_time))
-print("Concat time for " + str(50000000) + " particles with " + str(chunks) + " chunks: "  + str(end_time - mid_time))
-print("Total time: " + str(end_time - start_time))
-print("--------")
-print("concat:" + str((a.element_size() * a.nelement()) / 1000000) + " MB")
-print(a)
+# # 0,0,0,0 0,0,0,0 0,0,0,0 0,0,0,0     1,1,1,1 1,1,1,1 1,1,1,1 1,1,1,1     2,2,2,2 2,2,2,2 2,2,2,2 2,2,2,2    3,3,3,3 3,3,3,3 3,3,3,3 3,3,3,3
+iter = 0
+while iter <= chunks:
+        counter = iter * (BB_resolution**2) # 0,4,8,16
+        xyz[counter:counter + BB_resolution**2,2] = iter % BB_resolution
+        iter += 1
+
+print("xyz: ")
+print(xyz)
