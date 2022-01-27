@@ -10,5 +10,9 @@ a = torch.rand(7,3)
 b = torch.zeros(7,3)
 
 final = torch.cat((a, b),1)
+
 print(final)
+final[:,0] = torch.where(a[:,0] > 0, 5,-1)
+print(final)
+
 

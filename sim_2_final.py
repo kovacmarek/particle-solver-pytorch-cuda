@@ -75,12 +75,22 @@ class CollisionDetection():
         self.collisionTotal = collision
 
     def createBoundingBoxes(self):
-        BB_y_max = torch.max(self.particlesTotal[:,1])
-        BB_y_min = torch.min(self.particlesTotal[:,1])
-        BB_x_max = torch.max(self.particlesTotal[:,0])
+
+        padding = 0.15
+        BB_x_max = torch.max(self.particlesTotal[:,0]) 
+        BB_x_max += abs(BB_x_max * padding)                          # Padding +15%
         BB_x_min = torch.min(self.particlesTotal[:,0])
+        BB_x_min -= abs(BB_x_min * padding)                          # Padding +15%        
+
+        BB_y_max = torch.max(self.particlesTotal[:,1]) 
+        BB_y_max += abs(BB_y_max * padding)                          # Padding +15%
+        BB_y_min = torch.min(self.particlesTotal[:,1])
+        BB_y_min -= abs(BB_y_min * padding)                         # Padding +15%
+
         BB_z_max = torch.max(self.particlesTotal[:,2])
-        BB_z_min = torch.min(self.particlesTotal[:,2])
+        BB_z_max += abs(BB_z_max * padding)                          # Padding +15%
+        BB_z_min = torch.min(self.particlesTotal[:,2]) 
+        BB_z_min -= abs(BB_z_min * padding)                          # Padding +15%
 
         BB_A = torch.tensor([BB_x_max, BB_y_min, BB_z_min])
         BB_B = torch.tensor([BB_x_min, BB_y_min, BB_z_min])
@@ -143,18 +153,43 @@ class CollisionDetection():
 
         xyz_finalmin = (xyz * unit_xyz) - (scene_center - min_corner)
         xyz_finalmax = ((xyz+1) * unit_xyz) - (scene_center - min_corner)
+        
+        # FINAL BOUNDING BOXES AND THEIR MIN & MAX
+        self.BB_min_max = torch.cat((xyz_finalmin, xyz_finalmax), 1)
 
-        print("min_corner: ")
-        print(min_corner)
+        # # EXPORT MIN VALUES BB_MIN
+        # BB_points = torch.flatten(xyz_finalmin).cpu().numpy()
+        # geo.setPointFloatAttribValuesFromString("BB_min", BB_points)  
 
-        # EXPORT MIN VALUES BB_MIN
-        BB_points = torch.flatten(xyz_finalmin).cpu().numpy()
-        geo.setPointFloatAttribValuesFromString("BB_min", BB_points)  
+        # # EXPORT MAX VALUES BB_MAX
+        # BB_points = torch.flatten(xyz_finalmax).cpu().numpy()
+        # geo.setPointFloatAttribValuesFromString("BB_max", BB_points)  
 
-        # EXPORT MAX VALUES BB_MAX
-        BB_points = torch.flatten(xyz_finalmax).cpu().numpy()
-        geo.setPointFloatAttribValuesFromString("BB_max", BB_points)  
+    def findWhichBoundingBox(self):
+        x_axis = self.particlesTotal[:,0]
+        y_axis = self.particlesTotal[:,1]
+        z_axis = self.particlesTotal[:,2]
 
+        x_min = self.BB_min_max[:,0]
+        y_min = self.BB_min_max[:,1]
+        z_min = self.BB_min_max[:,2]
+
+        BB = self.BB_min_max[:,0:6]
+
+        BB_id = torch.arange(0,len(self.BB_min_max[:,0])).reshape(27,1)
+        BB = torch.cat((BB,BB_id),1).cuda()
+        
+        x_max = self.BB_min_max[:,3]
+        y_max = self.BB_min_max[:,4]
+        z_max = self.BB_min_max[:,5]
+
+        # ASIGN BLOCK ID TO EACH POINT
+        for i in range(0, len(self.BB_min_max[:,0])):
+            self.particlesTotal[:,7] = torch.where((x_axis > BB[i,0]) & (x_axis < BB[i,3]) & (y_axis > BB[i,1]) & (y_axis < BB[i,4]) & (z_axis > BB[i,2]) & (z_axis < BB[i,5]) , BB[i,6], self.particlesTotal[:,7])
+
+        block_ID = torch.flatten(self.particlesTotal[:,7]).cpu().numpy()
+        geo.setPointFloatAttribValuesFromString("block_id", block_ID) 
+        print(block_ID) 
 
 
     def selfCollision(self):
@@ -268,6 +303,7 @@ class CollisionDetection():
         # self.createBoundingBoxes()
         # self.selfCollision()
         self.createBoundingBoxes()
+        self.findWhichBoundingBox()
 
 
 class Simulation:
@@ -278,7 +314,7 @@ class Simulation:
 
     def InitialState(self):
         self.collisionTotal = torch.zeros(collisionPtnums,7, device='cuda') # 7th value is distance
-        self.particlesTotal = torch.zeros(ptnums,8, device='cuda') # 7th value is boolean if it's intersecting
+        self.particlesTotal = torch.zeros(ptnums,9, device='cuda') # 7th value is boolean if it's intersecting #8th value is bounding box ID
 
         # collision append
         init_collision_pos = geo1.pointFloatAttribValues("P") 
