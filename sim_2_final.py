@@ -8,6 +8,7 @@ node = hou.pwd()
 geo = node.geometry()
 inputs = node.inputs()
 geo1 = inputs[1].geometry()
+geo2 = inputs[2].geometry()
 
 ptnums = len(geo.points())
 collisionPtnums = len(geo1.points())
@@ -76,6 +77,23 @@ class CollisionDetection():
 
     def createBoundingBoxes(self):
 
+        # APPEND BOUNDARIES
+        self.boundaries = torch.zeros(8,3) # initialize tensor
+        init_collision_pos = geo2.pointFloatAttribValues("P") 
+        t_collision_pos = torch.tensor(init_collision_pos, device='cuda')
+        self.boundaries = t_collision_pos.reshape(8,3)
+
+        Boundaries_x_max = torch.max(self.boundaries[:,0]) 
+        Boundaries_x_min = torch.min(self.boundaries[:,0])     
+        Boundaries_y_max = torch.max(self.boundaries[:,1]) 
+        Boundaries_y_min = torch.min(self.boundaries[:,1])
+        Boundaries_z_max = torch.max(self.boundaries[:,2])
+        Boundaries_z_min = torch.min(self.boundaries[:,2]) 
+
+        boundaries_max_corner = torch.tensor([Boundaries_x_max, Boundaries_y_max, Boundaries_z_max])
+        boundaries_min_corner = torch.tensor([Boundaries_x_min, Boundaries_y_min, Boundaries_z_min])
+        
+        # INSIDE BOUNDING BOXES
         padding = 0.15
         BB_x_max = torch.max(self.particlesTotal[:,0]) 
         BB_x_max += abs(BB_x_max * padding)                          # Padding +15%
@@ -102,7 +120,16 @@ class CollisionDetection():
         BB_H = torch.tensor([BB_x_min, BB_y_max, BB_z_max])
 
         BB_centroid = (BB_A + BB_B + BB_C + BB_D + BB_E + BB_F + BB_G + BB_H) / 8
-        
+
+        # MAX CAP
+        if BB_x_max > Boundaries_x_max: BB_x_max = Boundaries_x_max 
+        if BB_y_max > Boundaries_y_max: BB_y_max = Boundaries_y_max
+        if BB_z_max > Boundaries_z_max: BB_z_max = Boundaries_z_max
+
+        # MIN CAP
+        if BB_x_min < Boundaries_x_min: BB_x_min = Boundaries_x_min
+        if BB_y_min < Boundaries_y_min: BB_y_min = Boundaries_y_min
+        if BB_z_min < Boundaries_z_min: BB_z_min = Boundaries_z_min
 
     #########################################
     # ----- INDEXING BOUNDING BOXES ----
@@ -140,6 +167,16 @@ class CollisionDetection():
         max_corner = torch.tensor([BB_x_max, BB_y_max, BB_z_max])
         min_corner = torch.tensor([BB_x_min, BB_y_min, BB_z_min])
         scene_center = torch.tensor([0,0,0])
+        print("max_min_corner: ")
+        print(max_corner)
+        print(min_corner)
+
+        # EXPORT MIN_MAX_CORNERS
+        export_min_corner = torch.flatten(min_corner).double().cpu().numpy()
+        geo.setGlobalAttribValue("min_corner", export_min_corner)
+
+        export_max_corner = torch.flatten(max_corner).double().cpu().numpy()
+        geo.setGlobalAttribValue("max_corner", export_max_corner)
 
         # GET UNIT LENGTH FOR EACH AXIS
         x_unit = (abs(max_corner[0].item() - min_corner[0].item())) / chunks
@@ -157,14 +194,6 @@ class CollisionDetection():
         # FINAL BOUNDING BOXES AND THEIR MIN & MAX
         self.BB_min_max = torch.cat((xyz_finalmin, xyz_finalmax), 1)
 
-        # # EXPORT MIN VALUES BB_MIN
-        # BB_points = torch.flatten(xyz_finalmin).cpu().numpy()
-        # geo.setPointFloatAttribValuesFromString("BB_min", BB_points)  
-
-        # # EXPORT MAX VALUES BB_MAX
-        # BB_points = torch.flatten(xyz_finalmax).cpu().numpy()
-        # geo.setPointFloatAttribValuesFromString("BB_max", BB_points)  
-
     def findWhichBoundingBox(self):
         x_axis = self.particlesTotal[:,0]
         y_axis = self.particlesTotal[:,1]
@@ -176,23 +205,22 @@ class CollisionDetection():
 
         BB = self.BB_min_max[:,0:6]
 
-        BB_id = torch.arange(0,len(self.BB_min_max[:,0])).reshape(27,1)
+        BB_id = torch.arange(0,len(self.BB_min_max[:,0])).reshape(len(self.BB_min_max[:,0]),1)
         BB = torch.cat((BB,BB_id),1).cuda()
-        
-        x_max = self.BB_min_max[:,3]
-        y_max = self.BB_min_max[:,4]
-        z_max = self.BB_min_max[:,5]
+
 
         # ASIGN BLOCK ID TO EACH POINT
         for i in range(0, len(self.BB_min_max[:,0])):
             self.particlesTotal[:,7] = torch.where((x_axis > BB[i,0]) & (x_axis < BB[i,3]) & (y_axis > BB[i,1]) & (y_axis < BB[i,4]) & (z_axis > BB[i,2]) & (z_axis < BB[i,5]) , BB[i,6], self.particlesTotal[:,7])
-
+            # TODO OPTIMIZE THIS STEP, MAYBE MULTITHREADING WITH TENSOR INDEX ASSIGNEMENT
+            
         block_ID = torch.flatten(self.particlesTotal[:,7]).cpu().numpy()
         geo.setPointFloatAttribValuesFromString("block_id", block_ID) 
-        print(block_ID) 
+        # print(block_ID) 
 
 
     def selfCollision(self):
+        # TODO: MAKE THIS WORK INSIDE BOUNDING BOXES
         start2 = time.time()
 
         chunks = 4
@@ -209,6 +237,8 @@ class CollisionDetection():
         print("VRAM:" + str((self.particlesTotal.element_size() * self.particlesTotal.nelement()) / 1000000) + " MB")       
 
     def findIntersection(self):
+        # TODO: MAKE THIS WORK INSIDE BOUNDING BOXES
+
         # Compute distance
         dist_A = torch.cdist(self.collisionTotal[:,0:3], self.particlesTotal[:,0:3], p=2.0)
         # dist_B = torch.cdist(self.collisionTotal[:,0:3], self.particlesTotal[:,3:6] + self.particlesTotal[:,0:3], p=2.0)
@@ -264,8 +294,7 @@ class CollisionDetection():
 
     def reflectVector(self):
         # Compute normal from current position of the particle to projected position on the prim
-        correct_ParticleNormal = self.projectedPos - self.particlesTotal[:,0:3].index_select(0, self.intersectedPtnums)
-              
+        correct_ParticleNormal = self.projectedPos - self.particlesTotal[:,0:3].index_select(0, self.intersectedPtnums)    
 
         # Initialize / Normalize
         normal = self.collisionTotal[:,3:6].index_select(0, self.intersectedPrims)
@@ -276,11 +305,6 @@ class CollisionDetection():
         Vb = 2*(torch.sum(normal *correct_ParticleNormal , dim=-1))
         Vb = (Vb.reshape(self.intersectedPtnums.size(0),1) * normal)
         Vb -= N_ParticleNormal
-
-        # ##### Export to Houdini  --------- TEMPORARY
-        # correct_dir = torch.rand_like(self.particlesTotal[:,0:3]).index_copy_(0, self.intersectedPtnums, Vb)
-        # correct_dir = torch.flatten(correct_dir).cpu().numpy()
-        # geo.setPointFloatAttribValuesFromString("N", correct_dir)
         
         # Friction
         friction = 10
@@ -294,17 +318,22 @@ class CollisionDetection():
         self.particlesTotal[:,0:3].index_copy_(0, self.intersectedPtnums, Vb_final + final_v + final_friction) # INSERT POSITION AT GIVEN INDICES
         self.particlesTotal[:,3:6].index_copy_(0, self.intersectedPtnums, Vb + final_v * bounce + final_friction) # INSERT VELOCITY AT GIVEN INDICES
 
-        self.projectedPos = torch.zeros_like(self.projectedPos) # reset zeros
+        self.projectedPos = torch.zeros_like(self.projectedPos) # reset to zeros
         
     def Apply(self):
-        # self.findIntersection()
-        # self.projectOntoPrim()
-        # self.reflectVector()
-        # self.createBoundingBoxes()
+        self.findIntersection()
+        self.projectOntoPrim()
+        self.reflectVector()
         # self.selfCollision()
+        create_time = time.time() # create
         self.createBoundingBoxes()
+        find_time = time.time() # find
         self.findWhichBoundingBox()
+        end2_time = time.time() # end
 
+        print("create time: " + str(ptnums) + " particles: " + str(find_time - create_time))
+        print("find time: " + str(ptnums) + " particles: " + str(end2_time - find_time))
+        print("-----------------")
 
 class Simulation:
     def __init__(self) -> None:
