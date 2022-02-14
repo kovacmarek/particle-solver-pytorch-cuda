@@ -216,7 +216,9 @@ class CollisionDetection():
             
         block_ID = torch.flatten(self.particlesTotal[:,7]).cpu().numpy()
         geo.setPointFloatAttribValuesFromString("block_id", block_ID) 
-        # print(block_ID) 
+        print("block_ID")
+        print(block_ID) 
+        
 
 
     def selfCollision(self):
