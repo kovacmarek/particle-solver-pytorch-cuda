@@ -214,15 +214,26 @@ class CollisionDetection():
             self.particlesTotal[:,7] = torch.where((x_axis > BB[i,0]) & (x_axis < BB[i,3]) & (y_axis > BB[i,1]) & (y_axis < BB[i,4]) & (z_axis > BB[i,2]) & (z_axis < BB[i,5]) , BB[i,6], self.particlesTotal[:,7])
             # TODO OPTIMIZE THIS STEP, MAYBE MULTITHREADING WITH TENSOR INDEX ASSIGNEMENT
             
-        block_ID = torch.flatten(self.particlesTotal[:,7]).cpu().numpy()
-        geo.setPointFloatAttribValuesFromString("block_id", block_ID) 
+        self.block_ID = torch.flatten(self.particlesTotal[:,7]).cpu().numpy()
+        geo.setPointFloatAttribValuesFromString("block_id", self.block_ID) 
         # print("block_ID")
         # print(block_ID) 
+        # print("block_ID: \n", self.block_ID)
         
 
 
     def selfCollision(self):
         # TODO: MAKE THIS WORK INSIDE BOUNDING BOXES
+        print("block_ID: \n", self.block_ID)
+        for i in range(0, 2):
+            selected = (self.particlesTotal[:,7] == i).nonzero(as_tuple=False).flatten()
+            print("selected: \n",selected)
+            selected_pos = self.particlesTotal[:,0:3].index_select(0, selected)
+            selected_pos += 5
+            self.particlesTotal[:,0:3].index_copy_(0, selected, selected_pos)
+
+
+            # print(selected_pos)
 
         iterations = 5
         iter = 0
@@ -373,15 +384,15 @@ class CollisionDetection():
         self.projectedPos = torch.zeros_like(self.projectedPos) # reset to zeros
         
     def Apply(self):
-        self.selfCollision()
         self.findIntersection()
         self.projectOntoPrim()
-        self.reflectVector()
         create_time = time.time() # create
         self.createBoundingBoxes()
         find_time = time.time() # find
         self.findWhichBoundingBox()
         end2_time = time.time() # end
+        self.selfCollision()
+        self.reflectVector()
 
         print("create time: " + str(ptnums) + " particles: " + str(find_time - create_time))
         print("find time: " + str(ptnums) + " particles: " + str(end2_time - find_time))
