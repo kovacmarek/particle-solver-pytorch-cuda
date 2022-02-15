@@ -167,9 +167,9 @@ class CollisionDetection():
         max_corner = torch.tensor([BB_x_max, BB_y_max, BB_z_max])
         min_corner = torch.tensor([BB_x_min, BB_y_min, BB_z_min])
         scene_center = torch.tensor([0,0,0])
-        print("max_min_corner: ")
-        print(max_corner)
-        print(min_corner)
+        # print("max_min_corner: ")
+        # print(max_corner)
+        # print(min_corner)
 
         # EXPORT MIN_MAX_CORNERS
         export_min_corner = torch.flatten(min_corner).double().cpu().numpy()
@@ -216,27 +216,74 @@ class CollisionDetection():
             
         block_ID = torch.flatten(self.particlesTotal[:,7]).cpu().numpy()
         geo.setPointFloatAttribValuesFromString("block_id", block_ID) 
-        print("block_ID")
-        print(block_ID) 
+        # print("block_ID")
+        # print(block_ID) 
         
 
 
     def selfCollision(self):
         # TODO: MAKE THIS WORK INSIDE BOUNDING BOXES
-        start2 = time.time()
 
-        chunks = 4
-        self.particlesTotal = self.particlesTotal.chunk(chunks)
-        for i in range(0, len(self.particlesTotal)):
-                self.particlesTotal[i][:,1] = 12.0 + i
+        iterations = 5
+        iter = 0
+        while iter < iterations:
+            iter += 1
+            diameter = 4.0
 
-        end2 = time.time()
+            # Compute distances between points
+            particle_dist = torch.cdist(self.particlesTotal[:,0:3], self.particlesTotal[:,0:3], p=2.0).double()
 
-        real_chunks = len(self.particlesTotal)
-        print("Forloop time for " + str(ptnums) + " particles and " + str(real_chunks) + " chunks: " + str(end2 - start2))
+            # Diagonal zeros set to double the diameter (to ignore these values for argmin)
+            eye = torch.zeros(ptnums,ptnums, device="cuda") + (diameter * 2)
+            eye = torch.tril(eye, diagonal=0)
+            # print("eye: \n",eye)
+            particle_dist = particle_dist + eye
 
-        self.particlesTotal = torch.cat(self.particlesTotal,0).cuda() 
-        print("VRAM:" + str((self.particlesTotal.element_size() * self.particlesTotal.nelement()) / 1000000) + " MB")       
+            # particle_dist = torch.where(particle_dist == 0.0, diameter, particle_dist)
+            # print(particle_dist)
+            closest_particle = torch.argmin(particle_dist, dim=1)
+            closest_particle_value = torch.min(particle_dist, dim=1)
+            closest_particle = torch.where(closest_particle_value.values > diameter, -1, closest_particle) # filter out non penetrating (more than radius * 2)
+            closest_particle_index = closest_particle[closest_particle != -1]
+            # print("closest_particle: \n", closest_particle)
+            # print("closest_particle_index: \n", closest_particle_index)
+
+            # Correcting collision position
+            iterated_index = (closest_particle != -1).nonzero(as_tuple=False).flatten()
+            # print("iterated_index: \n", iterated_index)
+
+            iteratedPos = self.particlesTotal[:,0:3].index_select(0, iterated_index)
+            iteratedVel = self.particlesTotal[:,3:6].index_select(0, iterated_index)
+            collisionPos = self.particlesTotal[:,0:3].index_select(0, closest_particle_index)
+            collisionVel = self.particlesTotal[:,3:6].index_select(0, closest_particle_index)
+
+            # print("iteratedPos: \n", iteratedPos)
+            # print("iteratedVel: \n", iteratedVel)
+            # print("collisionPos: \n", collisionPos)
+            # print("collisionVel: \n", collisionVel)
+
+            final_pos_dir = f.normalize(iteratedPos - collisionPos, p=1, dim=1)
+            # print("particle_dist: \n", particle_dist)
+            final_pos_magnitude = particle_dist[iterated_index, closest_particle_index]
+            final_pos_amount = (diameter - final_pos_magnitude) * 1.05
+            # print("final_pos_magnitude: \n", final_pos_magnitude)
+            # print("final_pos_amount: \n", final_pos_amount)
+            # print("final_pos_dir: \n", final_pos_dir)
+
+            # print("transposed_final_pos_dir: \n", torch.transpose(final_pos_dir,dim0=0,dim1=1))
+            required_move = torch.transpose(final_pos_dir,dim0=0,dim1=1) * final_pos_amount
+            required_move = torch.transpose(required_move,dim0=0,dim1=1)
+            # print("required_move: \n", required_move)
+            final_pos = (iteratedPos + required_move/iterations).float() 
+            final_vel = (iteratedVel * 0.1 ).float() 
+            # print("final_pos: \n", final_pos)
+
+            # print("---------------------------------------------------------")
+            
+            self.particlesTotal[:,0:3].index_copy_(0, iterated_index, final_pos) # INSERT POSITION AT GIVEN INDICES      
+            # self.particlesTotal[:,3:6].index_copy_(0, iterated_index, final_vel) # INSERT POSITION AT GIVEN INDICES 
+
+            # print("VRAM:" + str((self.particlesTotal.element_size() * self.particlesTotal.nelement()) / 1000000) + " MB")       
 
     def findIntersection(self):
         # TODO: MAKE THIS WORK INSIDE BOUNDING BOXES
@@ -269,6 +316,7 @@ class CollisionDetection():
 
         # indices of particles that intersected
         self.intersectedPtnums = (self.intersection != -1).nonzero(as_tuple=True)[0]
+
         # print("self.intersectedPtnums: ")
         # print(self.intersectedPtnums)
 
@@ -296,7 +344,7 @@ class CollisionDetection():
 
     def reflectVector(self):
         # Compute normal from current position of the particle to projected position on the prim
-        correct_ParticleNormal = self.projectedPos - self.particlesTotal[:,0:3].index_select(0, self.intersectedPtnums)    
+        correct_ParticleNormal = self.projectedPos - self.particlesTotal[:,0:3].index_select(0, self.intersectedPtnums)
 
         # Initialize / Normalize
         normal = self.collisionTotal[:,3:6].index_select(0, self.intersectedPrims)
@@ -304,17 +352,19 @@ class CollisionDetection():
         N_ParticleNormal = f.normalize(correct_ParticleNormal, p=2, dim=0)
 
         # Reflection vector
-        Vb = 2*(torch.sum(normal *correct_ParticleNormal , dim=-1))
+        Vb = 2*(torch.sum(normal * correct_ParticleNormal , dim=-1))
         Vb = (Vb.reshape(self.intersectedPtnums.size(0),1) * normal)
         Vb -= N_ParticleNormal
         
         # Friction
-        friction = 10
+        friction = 1
         final_friction = N_normal * (1.0 / (friction + 0.5))
+
+        diameter = N_ParticleNormal * 4
 
         # Setting variables
         bounce = 0.05
-        Vb_final = self.particlesTotal[:,3:6].index_select(0, self.intersectedPtnums) + (self.projectedPos - 0.001)  # Set new position
+        Vb_final = self.particlesTotal[:,3:6].index_select(0, self.intersectedPtnums) + (self.projectedPos - 0.0001 )  # Set new position
         final_v = (self.projectedPos - Vb_final)
 
         self.particlesTotal[:,0:3].index_copy_(0, self.intersectedPtnums, Vb_final + final_v + final_friction) # INSERT POSITION AT GIVEN INDICES
@@ -323,10 +373,10 @@ class CollisionDetection():
         self.projectedPos = torch.zeros_like(self.projectedPos) # reset to zeros
         
     def Apply(self):
+        self.selfCollision()
         self.findIntersection()
         self.projectOntoPrim()
         self.reflectVector()
-        # self.selfCollision()
         create_time = time.time() # create
         self.createBoundingBoxes()
         find_time = time.time() # find
