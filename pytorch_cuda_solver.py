@@ -381,10 +381,10 @@ class CollisionDetection():
                     closest_particle_index = torch.arange(0,len(selected), device='cuda:1')
                     time_find_closest_particle_end = time.time()
 
-                    print("closest_particle: \n", closest_particle)
+                    # print("closest_particle: \n", closest_particle)
                     # print("closest_particle_index: \n", closest_particle_index)
                     
-                    
+                    # print(smallest_dist.indices)
                     search_radius = torch.tensor((diameter * 1.5), device='cuda:1')
                     
                     # print(selected_pos[smallest_dist.indices[:,0],:])
@@ -394,51 +394,40 @@ class CollisionDetection():
                     accumulated_vel = torch.zeros(selected_len,3, device='cuda:1')
 
                     #### MERGE ALL POSITIONS INTO A SINGLE VECTOR
-                    point_count = 0
-                    while point_count < len(smallest_dist.indices[0,:]):
-                        
-                        
-                        dist = particle_dist[closest_particle, closest_particle_index].float()
+                    point_count = torch.zeros(1, device='cuda:1', dtype=torch.long)
+                    # print(type(point_count))
+                         
 
-                        zero = torch.zeros(1, device='cuda:1').float()
-                        one = torch.ones(1, device='cuda:1').float()
-                        half = one/2
+                    # LOGIC START
+                    zero = torch.zeros(1, device='cuda:1').float()
+                    one = torch.ones(1, device='cuda:1').float()
+                    half = one/2
+                    
+                    all_pos = selected_pos[smallest_dist.indices.unsqueeze(0),:] # Sum all
+                    all_pos_sum = torch.sum(all_pos, dim=2) / len(smallest_dist.indices[0,:]) # TODO ???
 
-                        # print(dist[0])
-                        dist = torch.where(dist > search_radius, diameter, dist) # If particle is too far, do not apply any forces to it
-                        # print(dist)
-                        dist_mask = torch.where(dist > search_radius, zero, one)
-                        # print(dist_mask)
+                    # Get normalized direction to averaged position
+                    dir_to_point_mults = (1 / torch.sum(abs(all_pos_sum - selected_pos), dim=2)) 
+                    dir_to_point = (all_pos_sum - selected_pos) * torch.transpose(dir_to_point_mults,0,1)
 
-                        above_mask = torch.zeros(selected_len)
-                        above_mask = torch.where(selected_pos[smallest_dist.indices[:,point_count],:][:,1] > selected_pos[:,1], half, one) # where Y of one point is bigger than other = set influence to zero
+                    # Get distance to averaged position
+                    averaged_dist = torch.linalg.norm(all_pos_sum - selected_pos, dim=-1)
 
-
-                        norm = f.normalize(selected_pos[smallest_dist.indices[:,point_count],:] - selected_pos[:,:], p=2, dim=0)
-                        subs = torch.transpose(norm, dim0=0, dim1=1) * ((diameter - dist) / number_of_points_to_check) * dist_mask
-                        subs = torch.transpose(subs, dim0=0, dim1=1)
-                        # print(subs[0:10])
-                        # print(subs)
-
-                        final_vel = subs
-    
+                    biased_dist = diameter - averaged_dist
+                    required_move = torch.transpose(biased_dist, 0,1) * dir_to_point
+                    required_move = torch.transpose(required_move, 0,1) * 0.1
 
 
-                        accumulated_vel += final_vel
-
-                        point_count += 1
-                        # print(dist)
-
-                    accumulated_vel = (accumulated_vel / len(smallest_dist.indices[:,:]) / iterations)
+                    # accumulated_vel = (accumulated_vel / len(smallest_dist.indices[:,:]) / iterations)
                     # print(len(smallest_dist.indices[0,:]))
                     # print(final_vel)
                         
-                    self.particlesTotal[:,3:6].index_add_(0, selected, -accumulated_vel*3) # INPUT ALL(penetrated & non penetrated) FROM CURRENT BLOCK INTO MAIN POSITION     
+                    self.particlesTotal[:,3:6].index_add_(0, selected, required_move) # INPUT ALL(penetrated & non penetrated) FROM CURRENT BLOCK INTO MAIN POSITION     
                     # self.particlesTotal[:,3:6].index_add_(0, closest_particle_index, accumulated_vel/2) # INPUT ALL(penetrated & non penetrated) FROM CURRENT BLOCK INTO MAIN POSITION    
                     # self.particlesTotal[:,0:3].index_add_(0, closest_particle, accumulated_vel) # INPUT ALL(penetrated & non penetrated) FROM CURRENT BLOCK INTO MAIN POSITION   
                     # self.particlesTotal[:,0:3].index_add_(0, closest_particle_index, -accumulated_vel) # INPUT ALL(penetrated & non penetrated) FROM CURRENT BLOCK INTO MAIN POSITION      
                     # self.particlesTotal[:,0:3] += self.particlesTotal[:,3:6] * TIME
-                acc_vel = torch.flatten(accumulated_vel).cpu().numpy()
+                acc_vel = torch.flatten(required_move).cpu().numpy()
                 geo.setPointFloatAttribValuesFromString("acc_vel", acc_vel)
                     
                     
