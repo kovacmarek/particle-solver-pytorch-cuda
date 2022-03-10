@@ -32,7 +32,7 @@ else:
 
 # Globals
 negative_vector = torch.tensor([-1.0, -1.0, -1.0], device='cuda:1')
-TIME  = 0.5
+TIME  = 0.2
 start_time = time.time()
 
 class Gravity:
@@ -335,7 +335,7 @@ class CollisionDetection():
         print("VRAM particle_dist:" + str((particle_dist_ram) / 1000000) + " MB") 
 
     def attractRepulsion(self):
-        attract_start = time.time()
+        # attract_start = time.time()
         # diameter = float(hou.parm('./pscale').rawValue())
         diameter = float(10)
         diameter = torch.tensor((diameter), device='cuda:1')
@@ -345,7 +345,7 @@ class CollisionDetection():
         for i in range(0, self.chunks):  
                 selected = (self.particlesTotal[:,7] == i).nonzero(as_tuple=False).flatten() # Filter out only points that match current Block ID      
                 
-                iterations = 30
+                iterations = 10
                 iter = 0
                 while iter < iterations:
                     
@@ -364,7 +364,9 @@ class CollisionDetection():
                         selected_pos = self.particlesTotal[:,0:3].index_select(0, selected) # Fetch positions of the points in current block only
                         selected_vel = self.particlesTotal[:,3:6].index_select(0, selected) # Fetch positions of the points in current block only
                          
-                    
+                        zero = torch.zeros(1, device='cuda:1').float()
+                        one = torch.ones(1, device='cuda:1').float()
+                        half = one/2                    
                         
                                         
                         # Compute distances between points
@@ -375,6 +377,7 @@ class CollisionDetection():
 
                         if(selected_len > 45000):
                             print("PROBLEEEEEEEEEEEEEEM \nPROBLEEEEEEEEEEEEEEM")
+                            print(len(selected))
                         else:
                             pass
                         # print("particle_dist_units: \n", len(particle_dist))
@@ -383,52 +386,65 @@ class CollisionDetection():
 
                         particle_dist = torch.where(particle_dist == 0.0, torch.tensor(diameter*10, dtype=particle_dist.dtype, device='cuda:1'), particle_dist)
                         smallest_dist = torch.topk(particle_dist, number_of_points_to_check, dim=1, largest=False)
+                        # print(smallest_dist.indices)
 
-                            
-                        search_radius = torch.tensor((diameter * 1.5), device='cuda:1')
+                        #
+                        distance = torch.zeros(len(selected), number_of_points_to_check, device='cuda:1')
 
-                        zero = torch.zeros(1, device='cuda:1').float()
-                        one = torch.ones(1, device='cuda:1').float()
-                        half = one/2
+                        for point_count in range(0, number_of_points_to_check):                                              
+                            ind = smallest_dist.indices[:,point_count].view(len(selected),1).flatten()
+                            indo = torch.arange(0,len(selected))
+                            distance[:,point_count] = diameter - particle_dist[indo,ind].view(len(selected),1).flatten()
+                        
+                        distance = torch.where(distance < -(diameter * 1.5), zero, distance) # ignore points that are further than (diameter * 1.5)
+
+
+                        search_radius = torch.tensor((diameter * 1.1), device='cuda:1')
+
+
                         
                         # Get average position of closes n points
                         all_pos = selected_pos[smallest_dist.indices.unsqueeze(0),:] # Sum all
                         all_vel = selected_vel[smallest_dist.indices.unsqueeze(0),:]
-                       
-                        all_pos_sum = torch.sum(all_pos, dim=2) / len(smallest_dist.indices[0,:]) # TODO ???
+
+
+                        # print(distance)
+                        distance = distance.view(len(selected), number_of_points_to_check ,1)
+                        all_pos_F = all_pos - selected_pos.view(len(selected),1,3)
+                        # print("all_pos_F: ", all_pos_F)   
+
+                        # Normalize all_pos_F
+                        all_pos_F_mults = (1 / torch.sum(abs(all_pos_F), dim=2)) 
+                        all_pos_normalized = all_pos_F * torch.transpose(all_pos_F_mults, 0,1)
+
+                        all_pos_F = all_pos_normalized * distance # TODO: Normalize all_pos_F and multiply by distance (which is already a diameter - distance)
+                        # print("all_pos_F: ", all_pos_F)
+                        all_pos_sum = torch.sum(all_pos_F, dim=2).squeeze(0) / len(smallest_dist.indices[0,:])
+                        # print("all_pos_sum: ", all_pos_sum)
+
+                        # print("distance: ", distance)   
+                        # print("all_pos_F adjusted: ", all_pos_F.squeeze(0).view(14,3))                       
+                        # all_pos_sum = torch.sum(all_pos, dim=2) / len(smallest_dist.indices[0,:]) # TODO ???
                         all_vel_sum = torch.sum(all_vel, dim=2) / len(smallest_dist.indices[0,:]) # TODO ???
 
-                        # Get normalized direction to averaged position
-                        dir_to_point_mults = (1 / torch.sum(abs(all_pos_sum - selected_pos), dim=2)) 
-                        dir_to_point = (all_pos_sum - selected_pos) * torch.transpose(dir_to_point_mults, 0,1)
-
-                        # Get distance to averaged position
-                        average_dist = torch.linalg.norm(all_pos_sum - selected_pos, dim=-1)
-
-                        # Particles further than search_radius won't be affected
-                        averaged_dist_mask = torch.where(average_dist > search_radius*2, zero, one)
-
-                        # Compute velocities
-                        biased_dist = (diameter) - (average_dist)
-                        # biased_dist = (biased_dist**2) / 3
-                        biased_dist *= averaged_dist_mask
-                        required_move = torch.transpose(biased_dist, 0,1) * dir_to_point 
-                        required_move = ((torch.transpose(required_move, 0,1) ) / iterations)
-                        required_move = required_move.squeeze(1) * TIME
+                        required_move = all_pos_sum * TIME
 
                         # required_move += selected_pos
                         # print(required_move[0,:])
 
                             
-                        self.particlesTotal[:,3:6].index_add_(0, selected, -all_vel_sum.squeeze(0) / iterations) # INPUT VELOCITIES FROM CURRENT BLOCK INTO MAIN VEL   
-                        self.particlesTotal[:,0:3].index_add_(0, selected, -required_move )
-                        # self.particlesTotal[:,0:3] += (self.particlesTotal[:,3:6] ) * TIME
+                        self.particlesTotal[:,3:6].index_add_(0, selected, -all_vel_sum.squeeze(0) / iterations/10) # INPUT VELOCITIES FROM CURRENT BLOCK INTO MAIN VEL  
+                        # self.particlesTotal[:,3:6].index_add_(0, selected, -required_move/iterations ) # INPUT VELOCITIES FROM CURRENT BLOCK INTO MAIN VEL  
+                        self.particlesTotal[:,0:3].index_add_(0, selected, -required_move  )
+                        # self.particlesTotal[:,0:3] += (self.particlesTotal[:,3:6] )
+
                         # print(torch.cuda.memory_summary(device='cuda:1', abbreviated=True))  
-                    acc_vel = torch.flatten(required_move).cpu().numpy()
-                    geo.setPointFloatAttribValuesFromString("acc_vel", acc_vel)
+                acc_vel = torch.flatten(required_move).cpu().numpy()
+                geo.setPointFloatAttribValuesFromString("acc_vel", acc_vel)
         del particle_dist
+        # torch.cuda.empty_cache()
         gc.collect()
-        attract_end = time.time()
+        # attract_end = time.time()
         # print(torch.cuda.memory_summary(device='cuda:1', abbreviated=True))  
         # print("attract time: " + str(attract_end - attract_start))
         # print("cdist time: " + str(cdist_end - cdist_start))
@@ -440,8 +456,6 @@ class CollisionDetection():
 
         # Compute distance
         dist_A = torch.cdist(self.collisionTotal[:,0:3], self.particlesTotal[:,0:3], p=2.0)
-        # dist_B = torch.cdist(self.collisionTotal[:,0:3], self.particlesTotal[:,3:6] + self.particlesTotal[:,0:3], p=2.0)
-        # dist_both = torch.add(dist_A, dist_B)
 
         # Find minarg for each collumn (particle)
         mina = torch.argmin(dist_A, dim=0)
@@ -489,46 +503,53 @@ class CollisionDetection():
         iter = 0
         while iter < iterations:
             iter += 1
-            # Compute normal from current position of the particle to projected position on the prim
-            correct_ParticleNormal = self.projectedPos - self.particlesTotal[:,0:3].index_select(0, self.intersectedPtnums)
+
+            if len(self.intersectedPrims) == 0:
+                pass
+            else:
+                # Initialize / Normalize
+                normal = self.collisionTotal[:,3:6].index_select(0, self.intersectedPrims)
+
+                origin = self.collisionTotal[:,0:3].index_select(0, self.intersectedPrims)
+
+                # Compute normal from current position of the particle to projected position on the prim
+                correct_ParticleNormal = self.particlesTotal[:,0:3].index_select(0, self.intersectedPtnums) - self.projectedPos
+
+                # print("correct_ParticleNormal: ", correct_ParticleNormal)
 
 
+                # Normalize N_normal
+                N_normal_mults = (1 / torch.sum(abs(normal), dim=1)) 
+                N_normal = normal * N_normal_mults.view(len(self.intersectedPrims),1)
 
-            # # Get normalized direction to averaged position
-            # normal = self.collisionTotal[:,3:6].index_select(0, self.intersectedPrims)
-            # N_normal = (1 / torch.sum(abs(normal), dim=)) 
-            # N_normal_final = normal * torch.transpose(N_normal, 0,1)
+                # # Normalize N_ParticleNormal
+                N_ParticleNormal_mults = (1 / torch.sum(abs(correct_ParticleNormal), dim=1)) 
+                N_ParticleNormal = correct_ParticleNormal * N_ParticleNormal_mults.view(len(self.intersectedPrims),1)
 
-            # N_ParticleNormal = (1 / torch.sum(abs(correct_ParticleNormal), dim=2)) 
-            # N_ParticleNormal_final = normal * torch.transpose(N_ParticleNormal, 0,1)
+                # Reflection vector   Vb=d−2(d⋅n)n
+                mult = N_normal * N_ParticleNormal
+                Vb =  (2 * torch.sum(mult , dim=-1).view(N_ParticleNormal.size(0), 1)) * N_normal
+                Vb -= N_ParticleNormal     
+                
+                # Friction
+                friction = 1
+                final_friction = N_normal * (1.0 / (friction + 0.5))
+                velo = self.projectedPos - self.particlesTotal[:,0:3].index_select(0, self.intersectedPtnums)
 
+                # Setting variables
+                bounce = 0.5
+                # dir_to_col =  (Vb + self.particlesTotal[:,0:3].index_select(0, self.intersectedPtnums))
+                zero = Vb*0                                
+                
+                self.particlesTotal[:,0:3].index_copy_(0, self.intersectedPtnums, self.projectedPos + final_friction/10 ) # INSERT POSITION AT GIVEN INDICES
+                self.particlesTotal[:,3:6].index_copy_(0, self.intersectedPtnums, zero ) # INSERT VELOCITY AT GIVEN INDICES     # Vb * bounce
 
+                
+                
+                # max_vel = 10
+                # self.particlesTotal[:,0:3] = torch.where( torch.sum(self.particlesTotal[:,3:6], dim=-1) > max_vel, self.particlesTotal[:,3:6] * 0.01, self.particlesTotal[:,3:6] )
 
-
-
-            # Initialize / Normalize
-            normal = self.collisionTotal[:,3:6].index_select(0, self.intersectedPrims)
-            N_normal = f.normalize(normal, p=2, dim=0)
-            N_ParticleNormal = f.normalize(correct_ParticleNormal, p=2, dim=0)
-
-            # Reflection vector
-            Vb = 2*(torch.sum(normal * correct_ParticleNormal , dim=-1))
-            Vb = (Vb.reshape(self.intersectedPtnums.size(0),1) * normal)
-            Vb -= N_ParticleNormal
-            
-            # Friction
-            friction = 1
-            final_friction = N_normal * (1.0 / (friction + 0.5))
-            velo = Vb - self.particlesTotal[:,0:3].index_select(0, self.intersectedPtnums)
-
-            # Setting variables
-            bounce = 0.01
-            dir_to_col = self.projectedPos - self.particlesTotal[:,0:3].index_select(0, self.intersectedPtnums)
-
-            self.particlesTotal[:,0:3].index_add_(0, self.intersectedPtnums, dir_to_col + final_friction) # INSERT POSITION AT GIVEN INDICES
-            # self.particlesTotal[:,3:6].index_copy_(0, self.intersectedPtnums, (Vb * bounce)/10) # INSERT VELOCITY AT GIVEN INDICES
-
-            self.projectedPos = torch.zeros_like(self.projectedPos) # reset to zeros
+                self.projectedPos = torch.sort(torch.zeros_like(self.projectedPos)) # reset to zeros
         
     def Apply(self):
         self.findIntersection()
@@ -540,17 +561,13 @@ class CollisionDetection():
         end2_time = time.time() # end
 
         self.reflectVector()
-        # iterations = 1
-        # iter = 0
-        # while iter < iterations:  
-        #     self.attractRepulsion()   
-        #     self.particlesTotal[:,0:3] += ((self.particlesTotal[:,3:6] ) / iterations) * TIME *0.1
-        #     iter += 1 
         
     def Apply_AR(self):
-        self.createBoundingBoxes()
-        self.findWhichBoundingBox()
-        self.attractRepulsion() 
+        # self.createBoundingBoxes()
+        # self.findWhichBoundingBox()
+        # self.attractRepulsion() 
+        pass
+        
 
          
              
@@ -612,15 +629,10 @@ class Simulation:
 
             sumForce = torch.zeros(ptnums,3, device='cuda:1') # reset all forces
 
-            # # Apply constraints (attractRepulsion)
-            for constraint in self.Constraints:
-                constraint.Apply_AR()
-                # self.particlesTotal[:,0:3] += (-self.particlesTotal[:,3:6] ) * TIME 
-
             # Accumulate Forces
             for force in self.Forces:
                 a = force.Apply_force()
-                sumForce += torch.add(sumForce, a) *0.1
+                sumForce += torch.add(sumForce, a) 
 
             # Symplectic Euler Integration
             acc = torch.zeros(ptnums,3, device='cuda:1')        
@@ -629,13 +641,24 @@ class Simulation:
             self.particlesTotal[:,3:6] += (acc * TIME) / iterations
             self.particlesTotal[:,0:3] += (self.particlesTotal[:,3:6] * TIME) 
 
+            # # Apply constraints (attractRepulsion)
+            for constraint in self.Constraints:
+                attract_start = time.time() # time start
+                constraint.Apply_AR()
+                attract_end = time.time() # time end
+                self.particlesTotal[:,0:3] += (self.particlesTotal[:,3:6] )
 
-        # Apply constraints (REFLECT VECTOR)
-        for constraint in self.Constraints:
-            constraint.Apply()
-        # self.particlesTotal[:,0:3] += (self.particlesTotal[:,3:6]) * TIME
+                print("attract time: " + str(attract_end - attract_start))
+                
+            # Apply constraints (REFLECT VECTOR)
+            for constraint in self.Constraints:
+                constraint.Apply()
+            
+            # print("vel_sums: ", torch.sum(self.particlesTotal[:,3:6], dim=-1))
 
-        return self.particlesTotal # RETURN RESULT
+
+
+            return self.particlesTotal # RETURN RESULT
 
 
 staticSimulation = hou.session.staticSimulation
@@ -646,7 +669,7 @@ if simFrame == 1:
     hou.session.staticSimulation = staticSimulation
     staticSimulation.InitialState()
 else:
-    iterations = 4
+    iterations = 1
     iter = 0
     while iter < iterations:  
         iter += 1 
