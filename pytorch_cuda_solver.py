@@ -52,11 +52,11 @@ class Noise:
     def __init__(self, total) -> None:
         self.particlesTotal = total
         self.Acc = torch.zeros(ptnums,3, device='cuda:1')
-        self.Acc[:,0] = torch.add(self.Acc[:,0], torch.randn(ptnums, device='cuda:1')*5) # X
-        torch.manual_seed(1)
-        self.Acc[:,1] = torch.add(self.Acc[:,0], torch.randn(ptnums, device='cuda:1')*5) # Y
-        torch.manual_seed(2)
-        self.Acc[:,2] = torch.add(self.Acc[:,0], torch.randn(ptnums, device='cuda:1')*5) # Z
+        self.Acc[:,0] = torch.add(self.Acc[:,0], torch.randn(ptnums, device='cuda:1')*200) # X
+        torch.manual_seed(simFrame)
+        self.Acc[:,1] = torch.add(self.Acc[:,0], torch.randn(ptnums, device='cuda:1')*200) # Y
+        torch.manual_seed(simFrame)
+        self.Acc[:,2] = torch.add(self.Acc[:,0], torch.randn(ptnums, device='cuda:1')*200) # Z
 
     def Apply_force(self):
         mass = self.particlesTotal[:,-1]
@@ -345,7 +345,7 @@ class CollisionDetection():
         for i in range(0, self.chunks):  
                 selected = (self.particlesTotal[:,7] == i).nonzero(as_tuple=False).flatten() # Filter out only points that match current Block ID      
                 
-                iterations = 10
+                iterations = 20
                 iter = 0
                 while iter < iterations:
                     
@@ -432,10 +432,12 @@ class CollisionDetection():
                         # required_move += selected_pos
                         # print(required_move[0,:])
 
+                        average_velocities = -all_vel_sum.squeeze(0) / iterations/4
+
                             
-                        self.particlesTotal[:,3:6].index_add_(0, selected, -all_vel_sum.squeeze(0) / iterations/10) # INPUT VELOCITIES FROM CURRENT BLOCK INTO MAIN VEL  
-                        # self.particlesTotal[:,3:6].index_add_(0, selected, -required_move/iterations ) # INPUT VELOCITIES FROM CURRENT BLOCK INTO MAIN VEL  
-                        self.particlesTotal[:,0:3].index_add_(0, selected, -required_move  )
+                        # self.particlesTotal[:,3:6].index_add_(0, selected, -all_vel_sum.squeeze(0) / iterations/10) # INPUT VELOCITIES FROM CURRENT BLOCK INTO MAIN VEL  
+                        self.particlesTotal[:,3:6].index_add_(0, selected, -required_move/ (iterations/5) + average_velocities) # INPUT VELOCITIES FROM CURRENT BLOCK INTO MAIN VEL  
+                        self.particlesTotal[:,0:3].index_add_(0, selected, -required_move/iterations )
                         # self.particlesTotal[:,0:3] += (self.particlesTotal[:,3:6] )
 
                         # print(torch.cuda.memory_summary(device='cuda:1', abbreviated=True))  
@@ -455,10 +457,11 @@ class CollisionDetection():
         # TODO: MAKE THIS WORK INSIDE BOUNDING BOXES
 
         # Compute distance
-        dist_A = torch.cdist(self.collisionTotal[:,0:3], self.particlesTotal[:,0:3], p=2.0)
+        dist = torch.cdist(self.collisionTotal[:,0:3], self.particlesTotal[:,0:3], p=2.0)
+        dist += torch.cdist(self.collisionTotal[:,0:3], self.particlesTotal[:,0:3] - self.particlesTotal[:,3:6], p=2.0)
 
         # Find minarg for each collumn (particle)
-        mina = torch.argmin(dist_A, dim=0)
+        mina = torch.argmin(dist, dim=0)
 
         # Clean unoccupied GPU memory cache
         torch.cuda.empty_cache()
@@ -488,15 +491,19 @@ class CollisionDetection():
         # print(self.intersectedPrims)
 
     def projectOntoPrim(self):
-        init = self.particlesTotal[:,0:3].index_select(0, self.intersectedPtnums) - self.collisionTotal[:,0:3].index_select(0, self.intersectedPrims)
+        
+        # Ray (velocity) is not pointing to the polygon's Normal plane therefore it's putting point way further.
+        rayDirection = self.particlesTotal[:,3:6].index_select(0, self.intersectedPtnums)
+        rayPoint = self.particlesTotal[:,0:3].index_select(0, self.intersectedPtnums)
+        planePoint = self.collisionTotal[:,0:3].index_select(0, self.intersectedPrims)
+        planeNormal = self.collisionTotal[:,3:6].index_select(0, self.intersectedPrims)
 
-        first = torch.sum(self.collisionTotal[:,3:6].index_select(0, self.intersectedPrims) * init, dim=1)
-        second = torch.sum(self.collisionTotal[:,3:6].index_select(0, self.intersectedPrims) * -self.particlesTotal[:,3:6].index_select(0, self.intersectedPtnums), dim=1)
-        third = first/second
+        ndotu = torch.sum(planeNormal * rayDirection, dim=1)
+        w = rayPoint - planePoint
+        si = torch.sum(-planeNormal * w, dim=1) / ndotu
+        Psi = w + si.view(len(si), 1) * rayDirection + planePoint
 
-        self.projectedPos = third * torch.transpose(self.particlesTotal[:,3:6].index_select(0, self.intersectedPtnums), dim0=0, dim1=1)
-        self.projectedPos = torch.transpose(self.projectedPos, dim0=0, dim1=1)
-        self.projectedPos += self.particlesTotal[:,0:3].index_select(0, self.intersectedPtnums)
+        self.projectedPos = Psi
 
     def reflectVector(self):
         iterations = 1
@@ -532,7 +539,7 @@ class CollisionDetection():
                 Vb -= N_ParticleNormal     
                 
                 # Friction
-                friction = 1
+                friction = 10
                 final_friction = N_normal * (1.0 / (friction + 0.5))
                 velo = self.projectedPos - self.particlesTotal[:,0:3].index_select(0, self.intersectedPtnums)
 
@@ -541,15 +548,15 @@ class CollisionDetection():
                 # dir_to_col =  (Vb + self.particlesTotal[:,0:3].index_select(0, self.intersectedPtnums))
                 zero = Vb*0                                
                 
-                self.particlesTotal[:,0:3].index_copy_(0, self.intersectedPtnums, self.projectedPos + final_friction/10 ) # INSERT POSITION AT GIVEN INDICES
-                self.particlesTotal[:,3:6].index_copy_(0, self.intersectedPtnums, zero ) # INSERT VELOCITY AT GIVEN INDICES     # Vb * bounce
+                self.particlesTotal[:,0:3].index_copy_(0, self.intersectedPtnums, self.projectedPos + N_ParticleNormal ) # INSERT POSITION AT GIVEN INDICES
+                self.particlesTotal[:,3:6].index_copy_(0, self.intersectedPtnums, Vb * bounce ) # INSERT VELOCITY AT GIVEN INDICES     # Vb * bounce
 
                 
                 
                 # max_vel = 10
                 # self.particlesTotal[:,0:3] = torch.where( torch.sum(self.particlesTotal[:,3:6], dim=-1) > max_vel, self.particlesTotal[:,3:6] * 0.01, self.particlesTotal[:,3:6] )
 
-                self.projectedPos = torch.sort(torch.zeros_like(self.projectedPos)) # reset to zeros
+                # self.projectedPos = torch.sort(torch.zeros_like(self.projectedPos)) # reset to zeros
         
     def Apply(self):
         self.findIntersection()
@@ -563,9 +570,9 @@ class CollisionDetection():
         self.reflectVector()
         
     def Apply_AR(self):
-        # self.createBoundingBoxes()
-        # self.findWhichBoundingBox()
-        # self.attractRepulsion() 
+        self.createBoundingBoxes()
+        self.findWhichBoundingBox()
+        self.attractRepulsion() 
         pass
         
 
@@ -620,7 +627,7 @@ class Simulation:
 
     def update(self):
         
-        iterations = 1
+        iterations = 4
         iter = 0
         while iter < iterations:  
             iter += 1 
@@ -642,13 +649,13 @@ class Simulation:
             self.particlesTotal[:,0:3] += (self.particlesTotal[:,3:6] * TIME) 
 
             # # Apply constraints (attractRepulsion)
-            for constraint in self.Constraints:
-                attract_start = time.time() # time start
-                constraint.Apply_AR()
-                attract_end = time.time() # time end
-                self.particlesTotal[:,0:3] += (self.particlesTotal[:,3:6] )
+            # for constraint in self.Constraints:
+            #     attract_start = time.time() # time start
+            #     constraint.Apply_AR()
+            #     attract_end = time.time() # time end
+            #     self.particlesTotal[:,0:3] += (self.particlesTotal[:,3:6] )
 
-                print("attract time: " + str(attract_end - attract_start))
+            #     print("attract time: " + str(attract_end - attract_start))
                 
             # Apply constraints (REFLECT VECTOR)
             for constraint in self.Constraints:
