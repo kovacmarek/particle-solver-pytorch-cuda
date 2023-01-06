@@ -6,7 +6,7 @@
 
 ![liquid](https://user-images.githubusercontent.com/30508711/211037554-7d24335a-8886-4e4f-9a00-0133a2bd16c9.gif)
 
-### Splitting simulation into multiple bounding boxes allows for higher point count with same amount of VRAM. Additionaly, compute can be run in parallel on multiple GPUs
+### Splitting simulation into multiple bounding boxes allows for higher point count with same amount of VRAM. Additionaly, this opens up possibilities for multi-GPU compute, since each section can be run on a separate device in parallel, also expanding total VRAM capacity.
 
 ![bounding_box_particles](https://user-images.githubusercontent.com/30508711/211037920-1069e944-7092-48fa-8e02-a4d2e49e5aba.gif)
 
