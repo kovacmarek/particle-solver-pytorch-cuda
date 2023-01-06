@@ -10,7 +10,7 @@
 
 ![bounding_box_particles](https://user-images.githubusercontent.com/30508711/211037920-1069e944-7092-48fa-8e02-a4d2e49e5aba.gif)
 
-### Collision detection is done by using only the polygon's centroid and its Normal, instead of each vertex.
+### Collision detection is done using only the polygon's centroid and its Normal, instead of vertices.
 
 ![photo_2022-01-12_22-51-20 (2)](https://user-images.githubusercontent.com/30508711/211038134-0c634509-e867-492f-af14-f8f5e6cd70d0.jpg)
 
