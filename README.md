@@ -1,6 +1,6 @@
 # Particle solver inside houdini using GPUs & Pytorch
 
-## This solver is only the preview.Further iterations will include significant clean up of the code, VDB collision support and stable particle behaviour.
+## This solver is only the preview.Further iterations will include VDB collision support and stable particle behaviour.
 
 ### Liquid behaviour of particles with surface tension
 
